@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How an AI language model works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#10141F; --panel:#171D2C; --panel2:#1E2538; --rule:#2A3249;
+  --paper:#ECE7DC; --dim:#8C92A8; --amber:#F4A93C; --amber-soft:rgba(244,169,60,.16);
+  --sky:#7DB8F0; --rose:#E4707E; --lilac:#B39DF0; --mint:#7FD1B0;
+  --display:'Bricolage Grotesque', 'Figtree', system-ui, sans-serif;
+  --body:'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono:'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ink);color:var(--paper);font-family:var(--body);overflow:hidden;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--amber);outline-offset:3px;border-radius:6px}
+
+/* ---------- rail ---------- */
+.rail{position:fixed;top:0;left:0;right:0;display:flex;gap:18px;padding:22px 5vw 0;z-index:5}
+.phase{display:flex;flex-direction:column;gap:8px}
+.phase .segs{display:flex;gap:4px}
+.seg{flex:1;height:5px;border-radius:3px;background:var(--rule);border:0;padding:0;cursor:pointer;transition:background .3s}
+.seg:hover{background:#3b4566}
+.seg.done{background:rgba(244,169,60,.45)}
+.seg.now{background:var(--amber)}
+.phase .pname{font-size:.82rem;color:var(--dim);transition:color .3s}
+.phase.now .pname{color:var(--paper)}
+
+/* ---------- scenes ---------- */
+.scene{position:absolute;inset:0;display:none;grid-template-columns:minmax(300px,4.6fr) 7.4fr;gap:4vw;padding:12vh 5vw 11vh;align-items:center}
+.scene.active{display:grid}
+.copy{max-width:36rem}
+.kicker{display:flex;gap:14px;align-items:baseline;margin-bottom:1.1rem;font-weight:600;font-size:1rem}
+.kicker .n{color:var(--amber)}
+.kicker .p{color:var(--dim);font-weight:500}
+h1,h2{font-family:var(--display);margin:0;letter-spacing:-.025em;font-weight:800}
+h1{font-size:clamp(3rem,5.6vw,6.2rem);line-height:.95}
+h2{font-size:clamp(2.1rem,3.6vw,3.9rem);line-height:1.02}
+.lead{font-size:clamp(1.05rem,1.3vw,1.38rem);line-height:1.55;margin:1.4rem 0 0;max-width:34em}
+.fact{font-size:clamp(.92rem,1.02vw,1.08rem);line-height:1.55;color:var(--dim);margin:1.4rem 0 0;padding-left:1rem;border-left:2px solid var(--amber);max-width:36em}
+.fact b{color:var(--paper);font-weight:600}
+.cta{margin-top:2rem;display:inline-flex;gap:.6rem;align-items:center;background:var(--amber);color:#1a1206;border:0;border-radius:999px;padding:.85rem 1.5rem;font-weight:700;font-size:1.05rem;cursor:pointer}
+.cta:hover{filter:brightness(1.07)}
+
+.stage{position:relative;height:min(70vh,42vw);min-height:360px;background:var(--panel);border:1px solid var(--rule);border-radius:22px;overflow:hidden}
+.stage svg{display:block;width:100%;height:100%}
+.stage h4{margin:0 0 .6rem;font-size:.9rem;font-weight:600;color:var(--dim)}
+
+/* ---------- controls ---------- */
+.controls{position:fixed;right:5vw;bottom:3.2vh;display:flex;gap:10px;z-index:5}
+.cbtn{width:48px;height:48px;border-radius:50%;border:1px solid var(--rule);background:var(--panel);display:grid;place-items:center;cursor:pointer;transition:border-color .2s,background .2s}
+.cbtn:hover{border-color:var(--amber)}
+.cbtn.primary{background:var(--amber);border-color:var(--amber)}
+.cbtn.primary svg{stroke:#1a1206}
+.cbtn svg{width:20px;height:20px;fill:none;stroke:var(--paper);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.hints{position:fixed;left:5vw;bottom:3.2vh;font-size:.82rem;color:var(--dim);z-index:5;line-height:48px}
+.hints kbd{font-family:var(--body);font-weight:600;border:1px solid var(--rule);border-radius:5px;padding:1px 6px;color:var(--paper);margin:0 2px}
+body.clean-mode .rail, body.clean-mode .controls, body.clean-mode .hints{opacity:0;pointer-events:none}
+.rail,.controls,.hints{transition:opacity .3s}
+
+/* ---------- tokens (shared) ---------- */
+.tok{display:inline-flex;align-items:center;font-family:var(--mono);font-size:.95rem;white-space:pre;padding:.28em .5em;border-radius:7px;background:var(--panel2);border:1px solid var(--rule);line-height:1.2}
+.c0{background:rgba(244,169,60,.2);border-color:rgba(244,169,60,.5)}
+.c1{background:rgba(125,184,240,.2);border-color:rgba(125,184,240,.5)}
+.c2{background:rgba(179,157,240,.2);border-color:rgba(179,157,240,.5)}
+.c3{background:rgba(127,209,176,.2);border-color:rgba(127,209,176,.5)}
+.c4{background:rgba(228,112,126,.2);border-color:rgba(228,112,126,.5)}
+.special{background:transparent;border:1.5px dashed var(--dim);color:var(--dim);font-size:.85rem}
+@keyframes pop{0%{transform:scale(.4);opacity:0}70%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
+.pop{animation:pop .38s cubic-bezier(.2,.8,.3,1.2) both}
+
+/* ---------- BPE ---------- */
+.bpe{display:grid;grid-template-columns:1fr 210px;gap:28px;padding:34px;height:100%}
+.bpe-words{display:flex;flex-direction:column;gap:18px;justify-content:center}
+.bpe-row{display:flex;align-items:center;gap:6px}
+.bpe-row .tok{font-size:1.5rem;padding:.3em .55em;transition:border-color .25s,background .25s,box-shadow .25s}
+.bpe-row .tok.hl{border-color:var(--amber);background:var(--amber-soft);box-shadow:0 0 0 3px rgba(244,169,60,.25)}
+.bpe-row .cnt{margin-left:14px;color:var(--dim);font-size:1.1rem}
+.bpe-status{font-size:1.15rem;min-height:3.2em;margin-top:8px;line-height:1.45}
+.bpe-status b{color:var(--amber)}
+.bpe-vocab{border-left:1px solid var(--rule);padding-left:24px;display:flex;flex-direction:column}
+.bpe-vocab .v{display:flex;flex-wrap:wrap;gap:6px;align-content:flex-start}
+.bpe-vocab .v .tok{font-size:.95rem}
+.bpe-vocab .v .tok.new{border-color:var(--amber);background:var(--amber-soft)}
+
+/* ---------- pretrain ---------- */
+.pt{display:grid;grid-template-rows:auto 1fr auto;gap:22px;padding:30px;height:100%}
+.pt-sent{display:flex;gap:8px;flex-wrap:wrap;align-items:center;min-height:52px}
+.pt-sent .tok{font-size:1.35rem}
+.pt-sent .next{min-width:4.2em;justify-content:center;border:2px dashed var(--amber);background:transparent;color:var(--amber)}
+.pt-sent .next.ok{border-style:solid;background:var(--amber-soft);color:var(--paper)}
+.pt-mid{display:grid;grid-template-columns:1.1fr 1fr;gap:30px;min-height:0}
+.bars{display:flex;flex-direction:column;gap:12px}
+.brow{display:grid;grid-template-columns:7.5em 1fr 3.6em;gap:10px;align-items:center;font-size:1.1rem}
+.brow .lab{font-family:var(--mono);white-space:pre;text-align:right}
+.brow .track{height:30px;background:var(--panel2);border-radius:5px;overflow:hidden}
+.brow .fill{height:100%;background:var(--sky);opacity:.55;border-radius:5px;transition:width .5s ease}
+.brow.correct .fill{background:var(--amber);opacity:1}
+.brow.correct .lab{color:var(--amber)}
+.brow .pct{color:var(--dim);font-variant-numeric:tabular-nums}
+.verdict{margin-top:14px;font-size:1.05rem;min-height:1.5em}
+.verdict.bad{color:var(--rose)} .verdict.good{color:var(--amber)}
+.pt-loss svg{height:auto;max-height:260px}
+.lossaxis{fill:none;stroke:var(--rule);stroke-width:2}
+.lossline{fill:none;stroke:var(--amber);stroke-width:3;stroke-linejoin:round}
+.pt-step{font-variant-numeric:tabular-nums;color:var(--dim);margin-top:6px}
+.gpus{display:grid;grid-template-columns:repeat(48,1fr);gap:3px}
+.gpus i{aspect-ratio:1;background:var(--panel2);border-radius:2px;transition:background .25s}
+.gpus i.on{background:var(--amber)}
+
+/* ---------- base / chat boxes ---------- */
+.two{display:flex;flex-direction:column;gap:22px;padding:34px;height:100%;justify-content:center}
+.box{background:var(--panel2);border:1px solid var(--rule);border-radius:16px;padding:22px 26px;transition:opacity .5s}
+.box h4{margin-bottom:.8rem}
+.box .txt{font-size:1.3rem;line-height:1.55;white-space:pre-wrap;min-height:3em}
+.box .you{font-weight:700}
+.box .gen{color:var(--sky)}
+.box.good .gen{color:var(--amber)}
+.caret::after{content:'';display:inline-block;width:.55em;height:1.1em;background:currentColor;vertical-align:-.15em;margin-left:2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- SFT ---------- */
+.sft{padding:34px;height:100%;display:flex;flex-direction:column;justify-content:center;gap:22px}
+.sft-doc{display:flex;flex-wrap:wrap;gap:6px;align-content:flex-start;min-height:180px;background:var(--panel2);border:1px solid var(--rule);border-radius:16px;padding:22px}
+.sft-doc .tok{font-size:1.1rem;transition:opacity .5s,background .5s,border-color .5s,box-shadow .5s}
+.sft-doc .brk{flex-basis:100%;height:0}
+.sft-doc.learn .ctx{opacity:.35}
+.sft-doc.learn .ans{background:var(--amber-soft);border-color:var(--amber);box-shadow:0 0 14px rgba(244,169,60,.35)}
+.legend{display:flex;gap:26px;flex-wrap:wrap;color:var(--dim);font-size:1rem}
+.legend span{display:inline-flex;gap:8px;align-items:center}
+.legend i{width:16px;height:16px;border-radius:4px;display:inline-block}
+.sft-count{font-size:1.05rem;color:var(--dim)}
+.sft-count b{color:var(--paper)}
+
+/* ---------- RLHF ---------- */
+.rl{position:relative;padding:28px;height:100%;display:grid;grid-template-rows:auto auto 1fr;gap:18px}
+.rl-prompt{font-size:1.2rem}
+.rl-prompt span{color:var(--dim);margin-right:10px}
+.rl-pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.rl-card{position:relative;background:var(--panel2);border:2px solid var(--rule);border-radius:14px;padding:16px 18px;font-size:1rem;line-height:1.5;transition:border-color .4s,opacity .4s,transform .4s;opacity:0;transform:translateY(8px)}
+.rl-card.in{opacity:1;transform:none}
+.rl-card b{display:block;margin-bottom:6px}
+.rl-card.win{border-color:var(--amber)}
+.rl-card.lose{opacity:.45}
+.badge{position:absolute;top:-12px;right:14px;background:var(--amber);color:#1a1206;font-weight:700;font-size:.85rem;border-radius:999px;padding:3px 12px;opacity:0;transition:opacity .3s}
+.rl-card.win .badge{opacity:1}
+.rl-bottom{display:grid;grid-template-columns:1fr 1.2fr;gap:18px;min-height:0}
+.rl-panel{background:var(--panel2);border:1px solid var(--rule);border-radius:14px;padding:16px 18px;opacity:0;transition:opacity .5s}
+.rl-panel.in{opacity:1}
+.rm-row{display:grid;grid-template-columns:5.5em 1fr 2.5em;gap:10px;align-items:center;margin:12px 0;font-size:1rem}
+.rm-row .track{height:20px;background:var(--ink);border-radius:5px;overflow:hidden}
+.rm-row .fill{height:100%;width:0;border-radius:5px;transition:width 1.2s ease}
+.rm-note{color:var(--dim);font-size:.92rem;line-height:1.45}
+.loopwrap{display:flex;flex-direction:column;gap:6px}
+.loopwrap svg{height:auto}
+.cursor{position:absolute;left:70%;top:95%;width:28px;height:28px;transition:left 1s cubic-bezier(.5,0,.2,1),top 1s cubic-bezier(.5,0,.2,1),transform .15s;z-index:3;pointer-events:none;opacity:0}
+.cursor.click{transform:scale(.8)}
+
+/* ---------- tokenizer ---------- */
+.tk{padding:32px;height:100%;display:flex;flex-direction:column;gap:18px;overflow:auto}
+.tk label{font-size:.9rem;color:var(--dim);font-weight:600}
+.tk input{width:100%;background:var(--panel2);border:1.5px solid var(--rule);border-radius:12px;padding:14px 16px;font:500 1.35rem var(--body);color:var(--paper);margin-top:8px}
+.tk input:focus{outline:none;border-color:var(--amber)}
+.tk-out{display:flex;flex-wrap:wrap;gap:8px 5px;align-content:flex-start}
+.tkc{display:inline-flex;flex-direction:column;align-items:center;gap:4px}
+.tkc .tok{font-size:1.15rem}
+.tkc .id{font-family:var(--mono);font-size:.72rem;color:var(--dim)}
+.tk-out .brk{flex-basis:100%;height:0}
+.tk-try{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:auto}
+.tk-try span{color:var(--dim);font-size:.95rem;margin-right:4px}
+.tk-stats{font-size:1.05rem;color:var(--dim)}
+.tk-stats b{color:var(--amber);font-size:1.3rem}
+
+/* ---------- embeddings ---------- */
+.em{display:flex;flex-direction:column;height:100%}
+.em-tabs{display:flex;gap:8px;padding:22px 28px 0}
+.em-left{flex:1;padding:10px 28px 24px;display:flex;flex-direction:column;gap:16px;justify-content:center}
+.em-right{flex:1;min-height:0;padding:0 10px 10px}
+.etable{display:flex;flex-direction:column;gap:3px}
+.erow{display:flex;align-items:center;gap:10px;transition:transform .3s,opacity .3s;opacity:.45}
+.erow.hit{opacity:1}
+.erow .lab{width:8em;font-family:var(--mono);font-size:.92rem;color:var(--dim);text-align:right;white-space:pre}
+.erow.hit .lab{color:var(--amber)}
+.erow.hit{transform:translateX(6px)}
+.erow.hit .vec{outline:2px solid var(--amber);outline-offset:2px}
+.vec{display:inline-grid;grid-template-columns:repeat(12,var(--cell,15px));gap:2px;border-radius:3px}
+.vec i{height:var(--cellh,15px);border-radius:2px;background:var(--panel2);transition:background .3s}
+.esum{display:flex;flex-direction:column;gap:14px}
+.esr{display:flex;align-items:center;gap:10px}
+.esr .tok{width:5.2em;justify-content:center}
+.esr .op{color:var(--dim);font-size:1.2rem;width:.8em;text-align:center}
+.esr .vec{--cell:14px;--cellh:26px}
+.esr .tok{font-size:1.1rem}
+.em-cap{display:flex;gap:20px;color:var(--dim);font-size:.9rem;flex-wrap:wrap}
+.em-cap span{display:inline-flex;gap:7px;align-items:center}
+.em-cap i{width:12px;height:12px;border-radius:2px;display:inline-block}
+.mappt{transition:opacity .5s}
+
+/* ---------- attention ---------- */
+.at{display:grid;grid-template-rows:1fr auto;height:100%}
+.at-bottom{display:flex;gap:26px;align-items:center;justify-content:space-between;padding:0 28px 24px}
+.heads{display:flex;flex-direction:column;gap:8px}
+.heads .hb{display:flex;gap:8px;flex-wrap:wrap}
+.hbtn{border:1.5px solid var(--rule);background:var(--panel2);border-radius:999px;padding:7px 14px;cursor:pointer;font-size:.95rem}
+.hbtn.on{border-color:var(--amber);background:var(--amber-soft)}
+.heat{display:grid;gap:1px}
+.heat i{width:12px;height:12px;background:var(--panel2)}
+.heatwrap{display:flex;gap:12px;align-items:center;color:var(--dim);font-size:.82rem;line-height:1.35;max-width:300px}
+.attok{cursor:pointer}
+
+/* ---------- layers ---------- */
+.ly{display:grid;grid-template-columns:1.3fr 1fr;height:100%}
+.ly-right{padding:28px;border-left:1px solid var(--rule);display:flex;flex-direction:column;gap:12px;justify-content:center}
+.guess{display:grid;grid-template-columns:4.8em 6.5em 1fr;gap:10px;align-items:center;font-size:1rem;opacity:0;transform:translateY(6px);transition:all .4s}
+.guess.in{opacity:1;transform:none}
+.guess .d{color:var(--dim)}
+.guess .g{font-family:var(--mono);white-space:pre}
+.guess .track{height:16px;background:var(--panel2);border-radius:4px;overflow:hidden}
+.guess .fill{height:100%;background:var(--amber);width:0;transition:width .6s}
+.note{color:var(--dim);font-size:.85rem;line-height:1.45}
+
+/* ---------- sampling ---------- */
+.sm{padding:28px 32px;height:100%;display:grid;grid-template-rows:auto 1fr auto auto;gap:16px}
+.sm-prompt{font-size:1.35rem}
+.sm-prompt .pick{color:var(--amber);font-family:var(--mono);font-size:1.2rem;border-bottom:2px dashed var(--amber);padding:0 .3em;white-space:pre}
+.sm .bars{justify-content:center}
+.sm .brow{grid-template-columns:7em 1fr 4.2em;transition:opacity .3s}
+.sm .brow.cut{opacity:.28}
+.sm .brow.cut .pct{text-decoration:line-through}
+.sm .brow.spin .track{outline:2px solid var(--paper);outline-offset:2px}
+.sm .brow.chosen .track{outline:2px solid var(--amber);outline-offset:2px}
+.sm .brow.chosen .fill{background:var(--amber);opacity:1}
+.sliders{display:grid;grid-template-columns:1fr 1fr auto;gap:28px;align-items:end}
+.sl label{display:flex;justify-content:space-between;font-size:.95rem;color:var(--dim);margin-bottom:8px}
+.sl label b{color:var(--paper);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--amber)}
+.pickbtn{background:var(--amber);color:#1a1206;border:0;border-radius:999px;padding:.75rem 1.3rem;font-weight:700;cursor:pointer;font-size:1rem}
+.history{color:var(--dim);font-size:.95rem;min-height:1.4em}
+.history b{color:var(--paper);font-family:var(--mono);font-weight:400;white-space:pre}
+
+/* ---------- loop ---------- */
+.lp{position:relative;padding:28px;height:100%;display:grid;grid-template-rows:auto 1fr auto;gap:18px}
+.chat{display:flex;flex-direction:column;gap:10px}
+.bub{max-width:85%;padding:12px 16px;border-radius:14px;font-size:1.15rem;line-height:1.5}
+.bub.user{align-self:flex-end;background:var(--panel2);border:1px solid var(--rule)}
+.bub.ai{align-self:flex-start;background:var(--amber-soft);border:1px solid rgba(244,169,60,.4);min-height:2.9em;min-width:40%}
+.lp-mid{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+.model{width:min(340px,70%);height:78px;border-radius:16px;background:var(--panel2);border:1.5px solid var(--rule);display:flex;gap:4px;padding:10px;align-items:stretch;position:relative}
+.model i{flex:1;border-radius:3px;background:var(--rule);transition:background .15s}
+.model.think i{background:var(--sky)}
+.model .ml{position:absolute;inset:auto 0 -26px 0;text-align:center;font-size:.85rem;color:var(--dim)}
+.outslot{height:44px;display:flex;align-items:center}
+.lp-in h4{margin-bottom:8px}
+.inrow{display:flex;flex-wrap:wrap;gap:5px}
+.inrow .tok{font-size:.9rem}
+.inrow .tok.gen{background:var(--amber-soft);border-color:rgba(244,169,60,.55)}
+.flyer{position:absolute;z-index:4;transition:left .5s cubic-bezier(.5,0,.2,1),top .5s cubic-bezier(.5,0,.2,1);pointer-events:none}
+.passes{font-size:.95rem;color:var(--dim);text-align:center;min-height:1.3em;margin-top:30px}
+.passes b{color:var(--paper)}
+
+/* ---------- responsive ---------- */
+@media (max-width: 900px){
+  body{overflow:auto}
+  .scene{position:relative;grid-template-columns:1fr;padding:90px 20px 100px;gap:24px;min-height:100vh;align-items:start}
+  .stage{height:auto;min-height:480px}
+  .rail{padding:14px 16px 0;gap:8px;background:var(--ink)}
+  .phase .pname{display:none}
+  .hints{display:none}
+  .bpe,.pt-mid,.em,.ly,.rl-bottom{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion: reduce){
+  .pop{animation:none}
+  *{transition-duration:.01s !important}
+}
+</style>
+</head>
+<body>
+
+<nav class="rail" aria-label="Steps"></nav>
+
+<main id="scenes">
+
+<!-- 0 -->
+<section class="scene" data-phase="0" data-build="map">
+  <div class="copy">
+    <h1>How an AI language model works</h1>
+    <p class="lead">Follow one path from raw internet text to the answer on your screen. Thirteen steps in three stages: collect the data, train the model, answer your prompt.</p>
+    <button class="cta" data-go="1">Start the journey</button>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 1 -->
+<section class="scene" data-phase="1" data-build="crawl">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 1</span><span class="p">Collect the data</span></div>
+    <h2>Crawl the web</h2>
+    <p class="lead">Programs called crawlers visit web pages, follow every link they find, and save a copy of each page. Books, code, Wikipedia and research papers are often added too.</p>
+    <p class="fact">Common Crawl, a free public archive, has been saving the web since 2008 and holds <b>hundreds of billions of pages</b>. The open FineWeb dataset was built from 96 of its snapshots.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 2 -->
+<section class="scene" data-phase="1" data-build="clean">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 2</span><span class="p">Collect the data</span></div>
+    <h2>Clean it up</h2>
+    <p class="lead">Most of the raw web is junk: spam, menus, cookie banners, and the same text copied thousands of times. A chain of filters keeps only real, useful writing.</p>
+    <p class="fact">Removing duplicates alone can throw away <b>45 to 75%</b> of the raw data. After all filters, FineWeb still contained <b>15 trillion tokens</b> of clean text.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 3 -->
+<section class="scene" data-phase="2" data-build="bpe">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 3</span><span class="p">Train the model</span></div>
+    <h2>Build a vocabulary of tokens</h2>
+    <p class="lead">Computers need numbers, not letters. A method called byte-pair encoding finds the pair of symbols that appears together most often and glues it into a new piece. Then it does it again, and again.</p>
+    <p class="fact">After tens of thousands of merges you get a vocabulary of roughly <b>50,000 to 200,000 tokens</b>. Common words become one token, rare words get split into pieces.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 4 -->
+<section class="scene" data-phase="2" data-build="pretrain">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 4</span><span class="p">Train the model</span></div>
+    <h2>Pretraining: guess the next token</h2>
+    <p class="lead">The model reads the text and, at every position, guesses which token comes next. Every wrong guess nudges billions of internal numbers, the weights, a tiny bit toward the right answer.</p>
+    <p class="fact">This one simple game, played <b>trillions of times</b> on thousands of GPUs for weeks or months, is where almost all of the model's knowledge comes from.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 5 -->
+<section class="scene" data-phase="2" data-build="base">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 5</span><span class="p">Train the model</span></div>
+    <h2>The base model: a brilliant autocomplete</h2>
+    <p class="lead">After pretraining, the model can continue any text in the style of the internet. But it doesn't know it's supposed to help you.</p>
+    <p class="fact">Ask it a question and it may just write <b>more questions</b>, because that's what a list of quiz questions on a web page looks like.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 6 -->
+<section class="scene" data-phase="2" data-build="sft">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 6</span><span class="p">Train the model</span></div>
+    <h2>Fine-tuning: learn to be an assistant</h2>
+    <p class="lead">Next, the model trains on example conversations. Special tokens mark who is speaking, and the model learns to write the assistant's part.</p>
+    <p class="fact">It's the <b>same next-token game</b> as pretraining. Only the data changes: far smaller, and far higher quality.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 7 -->
+<section class="scene" data-phase="2" data-build="rlhf">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 7</span><span class="p">Train the model</span></div>
+    <h2>Learn from feedback</h2>
+    <p class="lead">People compare two answers and pick the better one. A reward model learns their taste, and the assistant practices writing answers that score higher.</p>
+    <p class="fact">This is <b>reinforcement learning from human feedback</b> (RLHF). Newer variants skip the reward model (DPO), or reward answers that can be checked automatically, like math and code.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 8 -->
+<section class="scene" data-phase="3" data-build="tokenize">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 8</span><span class="p">Answer your prompt</span></div>
+    <h2>Your prompt becomes tokens</h2>
+    <p class="lead">When you hit send, your message is wrapped in the chat format the model was trained on, cut into tokens, and turned into ID numbers. Try typing your own.</p>
+    <p class="fact">In English, a token is about <b>three quarters of a word</b>. Because the model sees pieces instead of letters, counting the r's in "strawberry" is harder than it looks.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 9 -->
+<section class="scene" data-phase="3" data-build="embed">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 9</span><span class="p">Answer your prompt</span></div>
+    <h2>Tokens become vectors</h2>
+    <p class="lead">Each token ID picks one row from a giant table. That row is a list of numbers, called an embedding. Words with similar meanings get similar numbers.</p>
+    <p class="fact">GPT-2 used <b>768 numbers</b> per token, today's large models use thousands. Position information is added so the model knows the word order.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 10 -->
+<section class="scene" data-phase="3" data-build="attention">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 10</span><span class="p">Answer your prompt</span></div>
+    <h2>Attention: words look at each other</h2>
+    <p class="lead">Every token asks which earlier tokens matter to it and pulls in their information. That's how "it" works out that it means the animal. Click any word.</p>
+    <p class="fact">A token can only look <b>backwards</b>, never at words that come later. Many attention heads run side by side, each tracking a different kind of relationship.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 11 -->
+<section class="scene" data-phase="3" data-build="layers">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 11</span><span class="p">Answer your prompt</span></div>
+    <h2>Through the layers</h2>
+    <p class="lead">Attention plus a small neural network (the MLP) make one block. The vectors flow up through dozens of these blocks, and each one refines what the model understands.</p>
+    <p class="fact">GPT-2 small has <b>12 blocks</b>, GPT-3 has <b>96</b>. The panel on the right is an illustration of how the best guess can sharpen with depth.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 12 -->
+<section class="scene" data-phase="3" data-build="sample">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 12</span><span class="p">Answer your prompt</span></div>
+    <h2>Pick the next token</h2>
+    <p class="lead">The last layer gives every token in the vocabulary a score, and softmax turns the scores into probabilities. Then one token gets picked. Move the sliders to change how.</p>
+    <p class="fact"><b>Low temperature</b> makes the model predictable, <b>high temperature</b> makes it creative and riskier. <b>Top-p</b> keeps only the likeliest tokens whose chances add up to p.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 13 -->
+<section class="scene" data-phase="3" data-build="loop">
+  <div class="copy">
+    <div class="kicker"><span class="n">Step 13</span><span class="p">Answer your prompt</span></div>
+    <h2>Repeat until done</h2>
+    <p class="lead">The chosen token is added to the input, and the whole model runs again to pick the next one. Token by token the answer appears, until the model outputs a special end token.</p>
+    <p class="fact">That's why answers stream in word by word. A memory called the <b>KV cache</b> saves earlier work, so each new token is quick.</p>
+  </div>
+  <div class="stage"></div>
+</section>
+
+<!-- 14 -->
+<section class="scene" data-phase="0" data-build="recap">
+  <div class="copy">
+    <h2>The whole journey</h2>
+    <p class="lead">Collect and clean the text. Train a model to predict the next token, then teach it to be a helpful assistant.</p>
+    <p class="lead">For every prompt: turn words into numbers, send them through the layers, and pick one token at a time.</p>
+    <button class="cta" data-go="0">Start over</button>
+  </div>
+  <div class="stage"></div>
+</section>
+
+</main>
+
+<div class="hints"><kbd>←</kbd><kbd>→</kbd> move &nbsp; <kbd>R</kbd> replay &nbsp; <kbd>H</kbd> hide controls &nbsp; <kbd>F</kbd> fullscreen</div>
+<div class="controls">
+  <button class="cbtn" id="replay" aria-label="Replay this step"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v5h5"/></svg></button>
+  <button class="cbtn" id="prev" aria-label="Previous step"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+  <button class="cbtn primary" id="next" aria-label="Next step"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+</div>
+
+<script>
+(() => {
+'use strict';
+/* =========================================================
+   Core: navigation + timer management
+   ========================================================= */
+const scenes = [...document.querySelectorAll('.scene')];
+const NS = 'http://www.w3.org/2000/svg';
+let cur = -1, run = 0, timers = [];
+
+function after(ms, fn){ const r = run; const id = setTimeout(() => { if (r === run) fn(); }, ms); timers.push(id); return id; }
+function every(ms, fn){ const r = run; const id = setInterval(() => { if (r !== run) { clearInterval(id); return; } fn(); }, ms); timers.push(id); return id; }
+function stop(id){ clearTimeout(id); clearInterval(id); }
+function frames(fn){ const r = run; let last = performance.now(); const f = now => { if (r !== run) return; const dt = Math.min(50, now - last); last = now; if (fn(now, dt) !== false) requestAnimationFrame(f); }; requestAnimationFrame(f); }
+function tween(dur, fn, done, ease = easeInOut){ const r = run; const t0 = performance.now(); const f = now => { if (r !== run) return; const t = Math.min(1, (now - t0) / dur); fn(ease(t)); if (t < 1) requestAnimationFrame(f); else if (done) done(); }; requestAnimationFrame(f); }
+const easeInOut = t => t < .5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2) / 2;
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const lerp = (a, b, t) => a + (b - a) * t;
+function S(tag, attrs = {}, parent){ const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+function H(tag, cls, html, parent){ const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; if (parent) parent.appendChild(e); return e; }
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function rng(seed){ let s = seed >>> 0 || 1; return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return ((s >>> 0) % 100000) / 100000; }; }
+function hash(str){ let h = 2166136261; for (const c of str) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+/* ---------- rail ---------- */
+const rail = document.querySelector('.rail');
+const PHASES = [['Collect the data',[1,2]],['Train the model',[3,4,5,6,7]],['Answer your prompt',[8,9,10,11,12,13]]];
+const segs = [];
+PHASES.forEach(([name, idx], pi) => {
+  const ph = H('div', 'phase', null, rail); ph.style.flex = idx.length; ph.dataset.p = pi + 1;
+  const sg = H('div', 'segs', null, ph);
+  idx.forEach(i => { const b = H('button', 'seg', null, sg); b.setAttribute('aria-label', 'Go to step ' + i); b.onclick = () => show(i); segs[i] = b; });
+  H('div', 'pname', name, ph);
+});
+
+function show(i){
+  i = Math.max(0, Math.min(scenes.length - 1, i));
+  timers.forEach(stop); timers = []; run++;
+  if (cur >= 0) scenes[cur].classList.remove('active');
+  cur = i;
+  const sc = scenes[i];
+  sc.classList.add('active');
+  segs.forEach((s, k) => { if (!s) return; s.classList.toggle('now', k === i); s.classList.toggle('done', k < i); });
+  document.querySelectorAll('.phase').forEach(p => p.classList.toggle('now', +p.dataset.p === +sc.dataset.phase));
+  try { history.replaceState(null, '', '#' + i); } catch (e) { /* blocked in sandboxed previews; hash links are optional */ }
+  const st = sc.querySelector('.stage');
+  st.innerHTML = '';
+  const b = BUILD[sc.dataset.build];
+  if (b) requestAnimationFrame(() => b(st));
+}
+const next = () => show(cur + 1), prev = () => show(cur - 1);
+document.getElementById('next').onclick = next;
+document.getElementById('prev').onclick = prev;
+document.getElementById('replay').onclick = () => show(cur);
+document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => show(+b.dataset.go));
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input')) return;
+  if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); next(); }
+  else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prev(); }
+  else if (e.key === 'r' || e.key === 'R') show(cur);
+  else if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('clean-mode');
+  else if (e.key === 'f' || e.key === 'F') { try { const p = document.fullscreenElement ? document.exitFullscreen?.() : document.documentElement.requestFullscreen?.(); p?.catch?.(() => {}); } catch (err) {} }
+});
+let rsz; window.addEventListener('resize', () => { clearTimeout(rsz); rsz = setTimeout(() => { if (scenes[cur].dataset.build === 'clean') show(cur); }, 250); });
+
+/* =========================================================
+   A tiny but real BPE tokenizer, trained in the browser
+   ========================================================= */
+const PRE = / ?[A-Za-z]+| ?\d+| ?[^\sA-Za-z\d]+|\s+/g;
+// Merge rules learned offline with byte-pair encoding on a small English word list (~1,000 merges).
+const MERGES = [["e","r"],["a","n"],["i","n"],["e","n"],["o","r"],["a","t"],[" ","s"],[" ","S"],["l","l"],["T","h"],["s","t"],[" ","t"],["l","d"],[" ","W"],[" ","w"],["o","u"],["a","r"],["i","g"],["a","y"],["ig","h"],["r","e"],["o","w"],[" ","A"],["c","h"],[" ","m"],["s","e"],["v","e"],["e","t"],["in","g"],["igh","t"],[" ","h"],[" ","M"],["i","t"],["o","n"],["m","e"],["t","er"],[" ","l"],[" ","H"],[" ","C"],[" t","h"],["d","e"],[" ","b"],[" ","L"],[" ","Th"],[" ","c"],[" ","B"],[" ","a"],["o","k"],["l","e"],["a","in"],[" ","I"],["u","n"],["i","s"],[" ","O"],["R","e"],[" ","P"],["a","p"],["i","d"],["g","e"],["a","s"],["er","e"],[" ","G"],["i","ld"],[" ","F"],[" ","p"],["an","d"],[" ","T"],["u","e"],[" ","n"],["a","l"],["e","l"],[" ","N"],[" ","D"],["o","l"],["i","r"],["u","st"],["o","de"],["a","d"],["e","ar"],[" ","d"],["an","t"],[" ","f"],["en","d"],["m","p"],["ou","ld"],["a","k"],["t","o"],["o","me"],["t","h"],["o","ok"],["a","c"],["e","ll"],["v","en"],["f","f"],["a","ll"],["m","an"],["m","b"],["mb","er"],["e","x"],[" ","1"],["e","c"],[" ","o"],[" ","g"],["u","t"],[" ","E"],[" ","re"],["r","an"],["el","p"],[" ","Re"],[" s","t"],[" S","t"],["S","t"],[" th","e"],[" W","h"],["r","i"],["ex","t"],["ok","en"],["id","er"],[" ","e"],["i","me"],["W","h"],[" Th","e"],["ol","or"],["c","at"],["cat","ter"],["or","e"],["ode","l"],["a","ve"],["a","i"],["o","d"],["n","d"],["r","o"],["i","ll"],[" w","h"],["ak","e"],["e","e"],["e","w"],["i","ve"],["e","en"],["u","ch"],["a","ch"],["o","se"],["r","ou"],["r","ing"],["e","f"],["an","k"],["a","se"],["or","d"],["er","man"],["or","n"],["orn","ing"],["h","ild"],["or","ld"],["ap","p"],["u","mber"],["e","p"],["re","at"],["ff","er"],["or","t"],["ar","t"],["o","ve"],["i","e"],["ll","ow"],[" ","2"],["et","ter"],[" ","4"],["Th","e"],[" ","in"],[" I","n"],["I","n"],[" ","U"],["n","y"],[" S","p"],[" ","R"],["an","y"],[" ","y"],[" ","is"],["u","se"],[" ","Y"],["i","mp"],["l","ue"],["ap","it"],["apit","al"],[" I","t"],[" s","h"],[" S","h"],["S","h"],["on","e"],["ou","t"],["i","f"],["ou","r"],["v","er"],["ow","n"],["nd","er"],["x","p"],[" G","erman"],["S","p"],[" ","r"],[" ","ch"],[" 1","0"],[" 2","0"],["k","y"],["ran","c"],["ranc","e"],[" a","s"],["e","g"],["eg","s"],[" s","p"],["ime","s"],["ec","a"],["eca","use"],[" s","un"],["l","ight"],["a","de"],["olor","s"],["catter","s"],[" P","ar"],["ust","ri"],["ustri","a"],[" ","V"],["i","en"],["ien","n"],["ienn","a"],["an","g"],["ang","u"],["angu","a"],["angua","ge"],["oken","s"],["ear","n"],["e","s"],["elp","f"],["elpf","u"],["elpfu","l"],["s","i"],["si","st"],["sist","ant"],["r","it"],["rit","e"],["m","ai"],["mai","l"],["ri","end"],["u","re"],["it","h"],["in","k"],["o","od"],["ue","st"],["uest","i"],["uesti","on"],["imp","le"],["s","w"],["sw","er"],["I","t"],[" n","o"],[" N","o"],["N","o"],[" O","n"],["O","n"],[" A","s"],["A","s"],["ro","m"],["b","out"],["i","ch"],["i","k"],["ik","e"],[" ","J"],["i","m"],["n","ow"],["e","o"],["eo","p"],["eop","le"],["th","er"],["l","y"],["l","s"],["ls","o"],["ac","k"],["f","ter"],["w","o"],["or","k"],["ir","st"],["o","st"],["a","id"],["ay","s"],["a","me"],["o","th"],["et","w"],["etw","een"],["rou","g"],["roug","h"],["u","ring"],["ef","ore"],["g","ain"],["in","d"],["ank","s"],["le","ase"],["l","ain"],["ord","s"],["odel","s"],["ar","ge"],["o","mp"],["omp","u"],["ompu","ter"],["at","a"],["ter","n"],["tern","et"],["ook","s"],["re","en"],[" S","un"],["S","un"],["al","y"],["ap","an"],["o","g"],["e","at"],["eat","h"],["eath","er"],["od","ay"],["ar","m"],["ven","ing"],[" ch","ild"],[" C","hild"],["C","hild"],["e","st"],["app","y"],["ing","s"],["umber","s"],["ep","s"],["a","st"],["on","g"],["it","t"],["itt","le"],["ef","t"],["m","all"],["i","ffer"],["iffer","en"],["ifferen","t"],["ort","ant"],["l","ac"],["lac","e"],["o","in"],["oin","t"],["rou","p"],["ro","b"],["rob","le"],["roble","m"],["ac","t"],["ch","o"],["cho","ol"],["if","e"],["o","man"],["r","en"],["ou","n"],["oun","t"],["ount","r"],["ountr","y"],["it","y"],["ee","k"],["on","th"],["at","er"],["one","y"],["or","y"],["u","d"],["ud","y"],["l","ay"],["el","ie"],["elie","ve"],["o","ld"],["app","en"],["e","et"],["c","l"],["cl","u"],["clu","de"],["on","t"],["ont","in"],["ontin","ue"],["an","ge"],["e","ad"],["st","and"],["at","ch"],["o","llow"],["to","p"],["reat","e"],["e","ak"],["d","d"],["r","ow"],["p","en"],["al","k"],["me","mber"],["on","s"],["ons","ider"],["p","p"],["pp","ear"],["u","y"],["a","it"],["er","ve"],["ec","t"],["u","ild"],["m","ain"],["u","g"],["ug","ge"],["ugge","st"],["ai","se"],["as","s"],["q","u"],["qu","i"],["qui","re"],["p","ort"],["i","de"],["u","ll"],["ran","s"],["rans","l"],["ransl","at"],["ranslat","e"],["i","x"],["2","6"],["a","v"],["av","ing"],["in","e"],["e","ven"],["etter","s"],[" F","rance"],[" ","an"],[" 1","2"],[" o","f"],[" Par","is"],[" A","ustria"],[" V","ienna"],[" h","ave"],[" h","as"],[" e","ight"],[" ","on"],[" 4","8"],[" b","lue"],[" ","and"],[" c","apital"],[" H","ave"],["H","ave"],[" ","it"],[" A","n"],["A","n"],[" a","ll"],[" A","ll"],["A","ll"],[" ","u"],[" ","k"],[" ","K"],[" in","to"],[" In","to"],["In","to"],["u","r"],[" H","as"],["H","as"],["er","y"],["w","n"],[" ","un"],[" un","d"],[" und","er"],[" U","nder"],["U","nder"],["Q","uestion"],[" ","ex"],[" ex","p"],[" E","xp"],["E","xp"],[" A","I"],["P","ar"],[" German","y"],["G","erman"],[" It","aly"],[" Sp","ain"],[" J","apan"],[" E","ight"],["E","ight"],[" m","orning"],[" M","orning"],["M","orning"],[" w","orld"],[" W","orld"],["W","orld"],["mp","ortant"],["h","ange"],["ec","ide"],[" ","3"],[" ","5"],["1","0"],["2","0"],[" 10","0"],[" 20","26"],[" s","ky"],[" m","any"],[" l","ight"],[" Wh","at"],[" t","o"],[" l","egs"],[" sp","ider"],[" y","ou"],[" h","elp"],[" t","imes"],["Wh","y"],[" b","ecause"],[" sun","light"],[" m","ade"],[" c","olors"],[" a","ir"],[" s","catters"],[" m","ore"],[" th","an"],[" re","d"],[" l","anguage"],[" m","odel"],[" re","ad"],[" t","ext"],[" t","okens"],[" l","earn"],[" n","ext"],[" t","oken"],[" H","ow"],[" d","o"],[" Y","ou"],[" ","ar"],[" ar","e"],[" h","elpful"],[" as","sistant"],[" C","an"],[" m","e"],[" w","rite"],[" e","mail"],[" m","y"],[" f","riend"],[" S","ure"],[" c","an"],[" w","ith"],[" th","at"],[" c","at"],[" s","at"],[" m","at"],[" th","ink"],[" th","is"],[" g","ood"],[" ","q"],[" q","uestion"],[" h","ere"],[" s","imple"],[" an","swer"],[" b","e"],[" B","e"],["B","e"],[" T","o"],["T","o"],[" O","f"],["O","f"],[" A","nd"],["A","nd"],[" Th","at"],["Th","at"],[" f","or"],[" F","or"],["F","or"],[" no","t"],[" No","t"],["No","t"],[" W","ith"],["W","ith"],[" h","e"],[" H","e"],["H","e"],["Y","ou"],[" D","o"],["D","o"],[" ","at"],[" A","t"],["A","t"],[" Th","is"],["Th","is"],[" b","ut"],[" B","ut"],["B","ut"],[" h","is"],[" H","is"],["H","is"],[" b","y"],[" B","y"],["B","y"],[" f","rom"],[" F","rom"],["F","rom"],[" the","y"],[" The","y"],["The","y"],[" w","e"],[" W","e"],["W","e"],[" s","ay"],[" S","ay"],["S","ay"],[" h","er"],[" H","er"],["H","er"],[" sh","e"],[" Sh","e"],["Sh","e"],[" ","or"],[" O","r"],["O","r"],[" w","ill"],[" W","ill"],["W","ill"],[" M","y"],["M","y"],[" ","one"],[" On","e"],["On","e"],[" w","ould"],[" W","ould"],["W","ould"],[" th","ere"],[" Th","ere"],["Th","ere"],[" the","ir"],[" The","ir"],["The","ir"],[" wh","at"],["Wh","at"],[" s","o"],[" S","o"],["S","o"],[" u","p"],[" U","p"],["U","p"],[" ","out"],[" O","ut"],["O","ut"],[" ","if"],[" I","f"],["I","f"],[" a","bout"],[" A","bout"],["A","bout"],[" wh","o"],[" Wh","o"],["Wh","o"],[" g","et"],[" G","et"],["G","et"],[" wh","ich"],[" Wh","ich"],["Wh","ich"],[" g","o"],[" G","o"],["G","o"],[" M","e"],["M","e"],[" wh","en"],[" Wh","en"],["Wh","en"],[" m","ake"],[" M","ake"],["M","ake"],["C","an"],[" l","ike"],[" L","ike"],["L","ike"],[" t","ime"],[" T","ime"],["T","ime"],[" ","j"],[" j","ust"],[" J","ust"],["J","ust"],[" h","im"],[" H","im"],["H","im"],[" k","now"],[" K","now"],["K","now"],[" t","ake"],[" T","ake"],["T","ake"],[" p","eople"],[" P","eople"],["P","eople"],[" y","ear"],[" Y","ear"],["Y","ear"],[" y","our"],[" Y","our"],["Y","our"],[" G","ood"],["G","ood"],[" s","ome"],[" S","ome"],["S","ome"],[" c","ould"],[" C","ould"],["C","ould"],[" the","m"],[" The","m"],["The","m"],[" s","ee"],[" S","ee"],["S","ee"],[" o","ther"],[" O","ther"],["O","ther"],[" Th","an"],["Th","an"],[" th","en"],[" Th","en"],["Th","en"],[" n","ow"],[" N","ow"],["N","ow"],[" l","ook"],[" L","ook"],["L","ook"],[" on","ly"],[" On","ly"],["On","ly"],[" c","ome"],[" C","ome"],["C","ome"],[" it","s"],[" It","s"],["It","s"],[" o","ver"],[" O","ver"],["O","ver"],[" Th","ink"],["Th","ink"],[" a","lso"],[" A","lso"],["A","lso"],[" b","ack"],[" B","ack"],["B","ack"],[" a","fter"],[" A","fter"],["A","fter"],[" ","use"],[" U","se"],["U","se"],[" t","wo"],[" T","wo"],["T","wo"],[" h","ow"],["H","ow"],[" ","our"],[" O","ur"],["O","ur"],[" w","ork"],[" W","ork"],["W","ork"],[" f","irst"],[" F","irst"],["F","irst"],[" w","ell"],[" W","ell"],["W","ell"],[" w","ay"],[" W","ay"],["W","ay"],[" e","ven"],[" E","ven"],["E","ven"],[" n","ew"],[" N","ew"],["N","ew"],[" w","ant"],[" W","ant"],["W","ant"],[" B","ecause"],["B","ecause"],[" ","any"],[" A","ny"],["A","ny"],[" the","se"],[" The","se"],["The","se"],[" g","ive"],[" G","ive"],["G","ive"],[" d","ay"],[" D","ay"],["D","ay"],[" m","ost"],[" M","ost"],["M","ost"],[" u","s"],[" U","s"],["U","s"],[" I","s"],["I","s"],[" A","re"],["A","re"],[" w","as"],[" W","as"],["W","as"],[" w","ere"],[" W","ere"],["W","ere"],[" b","een"],[" B","een"],["B","een"],[" h","ad"],[" H","ad"],["H","ad"],[" d","id"],[" D","id"],["D","id"],[" s","aid"],[" S","aid"],["S","aid"],[" s","ays"],[" S","ays"],["S","ays"],[" M","ade"],["M","ade"],[" wh","y"],[" Wh","y"],[" wh","ere"],[" Wh","ere"],["Wh","ere"],[" H","ere"],["H","ere"],[" ","ver"],[" ver","y"],[" V","ery"],["V","ery"],[" m","uch"],[" M","uch"],["M","uch"],[" M","ore"],["M","ore"],[" M","any"],["M","any"],[" s","uch"],[" S","uch"],["S","uch"],[" ","own"],[" O","wn"],["O","wn"],[" s","ame"],[" S","ame"],["S","ame"],[" e","ach"],[" E","ach"],["E","ach"],[" f","ew"],[" F","ew"],["F","ew"],[" th","ose"],[" Th","ose"],["Th","ose"],[" b","oth"],[" B","oth"],["B","oth"],[" b","etween"],[" B","etween"],["B","etween"],[" th","rough"],[" Th","rough"],["Th","rough"],[" d","uring"],[" D","uring"],["D","uring"],[" b","efore"],[" B","efore"],["B","efore"],[" a","gain"],[" A","gain"],["A","gain"],[" o","ff"],[" O","ff"],["O","ff"],[" d","own"],[" D","own"],["D","own"],[" sh","ould"],[" Sh","ould"],["Sh","ould"],[" m","ay"],[" M","ay"],["M","ay"],[" m","ight"],[" M","ight"],["M","ight"],[" m","ust"],[" M","ust"],["M","ust"],[" sh","all"],[" Sh","all"],["Sh","all"],[" l","et"],[" L","et"],["L","et"],[" H","elp"],["H","elp"],[" as","k"],[" As","k"],["As","k"],[" t","ell"],[" T","ell"],["T","ell"],[" f","ind"],[" F","ind"],["F","ind"],[" th","ank"],[" Th","ank"],["Th","ank"],[" th","anks"],[" Th","anks"],["Th","anks"],[" p","lease"],[" P","lease"],["P","lease"],[" s","ure"],["S","ure"],[" An","swer"],["An","swer"],[" ","Question"],[" W","rite"],["W","rite"],[" Re","ad"],["Re","ad"],[" L","earn"],["L","earn"],[" exp","lain"],[" Exp","lain"],["Exp","lain"],[" S","imple"],["S","imple"],[" w","ords"],[" W","ords"],["W","ords"],[" w","ord"],[" W","ord"],["W","ord"],[" T","ext"],["T","ext"],[" T","oken"],["T","oken"],[" T","okens"],["T","okens"],[" M","odel"],["M","odel"],[" m","odels"],[" M","odels"],["M","odels"],[" L","anguage"],["L","anguage"],[" l","arge"],[" L","arge"],["L","arge"],["A","I"],[" c","omputer"],[" C","omputer"],["C","omputer"],[" d","ata"],[" D","ata"],["D","ata"],[" in","ternet"],[" In","ternet"],["In","ternet"],[" b","ook"],[" B","ook"],["B","ook"],[" b","ooks"],[" B","ooks"],["B","ooks"],[" c","ode"],[" C","ode"],["C","ode"],[" S","ky"],["S","ky"],[" B","lue"],["B","lue"],[" Re","d"],["Re","d"],[" g","reen"],[" G","reen"],["G","reen"],[" L","ight"],["L","ight"],[" Sun","light"],["Sun","light"],[" A","ir"],["A","ir"],[" c","olor"],[" C","olor"],["C","olor"],[" C","olors"],["C","olors"],[" C","apital"],["C","apital"],["F","rance"],["Par","is"],["A","ustria"],["V","ienna"],["German","y"],["It","aly"],["Sp","ain"],["J","apan"],[" C","at"],["C","at"],[" d","og"],[" D","og"],["D","og"],[" S","at"],["S","at"],[" M","at"],["M","at"],[" ","ran"],[" R","an"],["R","an"],[" p","ar"],[" par","k"],[" Par","k"],["Par","k"],[" Sp","ider"],["Sp","ider"],[" L","egs"],["L","egs"],[" w","eather"],[" W","eather"],["W","eather"],[" t","oday"],[" T","oday"],["T","oday"],[" sun","ny"],[" Sun","ny"],["Sun","ny"],[" w","arm"],[" W","arm"],["W","arm"],[" r","ain"],[" R","ain"],["R","ain"],[" e","vening"],[" E","vening"],["E","vening"],[" E","mail"],["E","mail"],[" F","riend"],["F","riend"],[" b","est"],[" B","est"],["B","est"],[" y","es"],[" Y","es"],["Y","es"],[" b","ig"],[" B","ig"],["B","ig"],[" h","appy"],[" H","appy"],["H","appy"],[" th","ing"],[" Th","ing"],["Th","ing"],[" th","ings"],[" Th","ings"],["Th","ings"],[" n","umber"],[" N","umber"],["N","umber"],[" n","umbers"],[" N","umbers"],["N","umbers"],[" st","ep"],[" St","ep"],["St","ep"],[" st","eps"],[" St","eps"],["St","eps"],[" N","ext"],["N","ext"],[" l","ast"],[" L","ast"],["L","ast"],[" l","ong"],[" L","ong"],["L","ong"],[" g","reat"],[" G","reat"],["G","reat"],[" l","ittle"],[" L","ittle"],["L","ittle"],[" o","ld"],[" O","ld"],["O","ld"],[" r","ight"],[" R","ight"],["R","ight"],[" l","eft"],[" L","eft"],["L","eft"],[" h","igh"],[" H","igh"],["H","igh"],[" s","mall"],[" S","mall"],["S","mall"],[" d","ifferent"],[" D","ifferent"],["D","ifferent"],[" ","imp"],[" imp","ortant"],[" I","mportant"],["I","mportant"],[" p","lace"],[" P","lace"],["P","lace"],[" c","ase"],[" C","ase"],["C","ase"],[" p","oint"],[" P","oint"],["P","oint"],[" p","art"],[" P","art"],["P","art"],[" g","roup"],[" G","roup"],["G","roup"],[" p","roblem"],[" P","roblem"],["P","roblem"],[" f","act"],[" F","act"],["F","act"],[" h","and"],[" H","and"],["H","and"],[" h","ome"],[" H","ome"],["H","ome"],[" s","chool"],[" S","chool"],["S","chool"],[" l","ife"],[" L","ife"],["L","ife"],[" m","an"],[" M","an"],["M","an"],[" w","oman"],[" W","oman"],["W","oman"],[" child","ren"],[" Child","ren"],["Child","ren"],[" c","ountry"],[" C","ountry"],["C","ountry"],[" c","ity"],[" C","ity"],["C","ity"],[" w","eek"],[" W","eek"],["W","eek"],[" m","onth"],[" M","onth"],["M","onth"],[" n","ight"],[" N","ight"],["N","ight"],[" w","ater"],[" W","ater"],["W","ater"],[" m","oney"],[" M","oney"],["M","oney"],[" st","ory"],[" St","ory"],["St","ory"],[" st","udy"],[" St","udy"],["St","udy"],[" st","art"],[" St","art"],["St","art"],[" sh","ow"],[" Sh","ow"],["Sh","ow"],[" p","lay"],[" P","lay"],["P","lay"],[" r","un"],[" R","un"],["R","un"],[" m","ove"],[" M","ove"],["M","ove"],[" l","ive"],[" L","ive"],["L","ive"],[" b","elieve"],[" B","elieve"],["B","elieve"],[" h","old"],[" H","old"],["H","old"],[" b","ring"],[" B","ring"],["B","ring"],[" h","appen"],[" H","appen"],["H","appen"],[" st","and"],[" St","and"],["St","and"],[" l","ose"],[" L","ose"],["L","ose"],[" p","ay"],[" P","ay"],["P","ay"],[" m","eet"],[" M","eet"],["M","eet"],[" in","clude"],[" In","clude"],["In","clude"],[" c","ontinue"],[" C","ontinue"],["C","ontinue"],[" s","et"],[" S","et"],["S","et"],[" ch","ange"],[" C","hange"],["C","hange"],[" l","ead"],[" L","ead"],["L","ead"],[" under","stand"],[" Under","stand"],["Under","stand"],[" w","atch"],[" W","atch"],["W","atch"],[" f","ollow"],[" F","ollow"],["F","ollow"],[" s","top"],[" S","top"],["S","top"],[" c","reate"],[" C","reate"],["C","reate"],[" sp","eak"],[" Sp","eak"],["Sp","eak"],[" a","llow"],[" A","llow"],["A","llow"],[" a","dd"],[" A","dd"],["A","dd"],[" sp","end"],[" Sp","end"],["Sp","end"],[" g","row"],[" G","row"],["G","row"],[" o","pen"],[" O","pen"],["O","pen"],[" w","alk"],[" W","alk"],["W","alk"],[" w","in"],[" W","in"],["W","in"],[" o","ffer"],[" O","ffer"],["O","ffer"],[" re","member"],[" Re","member"],["Re","member"],[" l","ove"],[" L","ove"],["L","ove"],[" c","onsider"],[" C","onsider"],["C","onsider"],[" a","ppear"],[" A","ppear"],["A","ppear"],[" b","uy"],[" B","uy"],["B","uy"],[" w","ait"],[" W","ait"],["W","ait"],[" s","erve"],[" S","erve"],["S","erve"],[" d","ie"],[" D","ie"],["D","ie"],[" s","end"],[" S","end"],["S","end"],[" exp","ect"],[" Exp","ect"],["Exp","ect"],[" b","uild"],[" B","uild"],["B","uild"],[" st","ay"],[" St","ay"],["St","ay"],[" f","all"],[" F","all"],["F","all"],[" c","ut"],[" C","ut"],["C","ut"],[" re","ach"],[" Re","ach"],["Re","ach"],[" k","ill"],[" K","ill"],["K","ill"],[" re","main"],[" Re","main"],["Re","main"],[" s","uggest"],[" S","uggest"],["S","uggest"],[" r","aise"],[" R","aise"],["R","aise"],[" p","ass"],[" P","ass"],["P","ass"],[" s","ell"],[" S","ell"],["S","ell"],[" re","quire"],[" Re","quire"],["Re","quire"],[" re","port"],[" Re","port"],["Re","port"],[" ","de"],[" de","c"],[" dec","ide"],[" D","ecide"],["D","ecide"],[" p","ull"],[" P","ull"],["P","ull"],[" As","sistant"],["As","sistant"],[" H","elpful"],["H","elpful"],[" t","ranslate"],[" T","ranslate"],["T","ranslate"],[" T","imes"],["T","imes"],[" S","catters"],["S","catters"],[" s","catter"],[" S","catter"],["S","catter"],[" m","ix"],[" M","ix"],["M","ix"],["1","2"],["4","8"],["10","0"],["20","26"],[" h","aving"],[" H","aving"],["H","aving"],[" n","ine"],[" N","ine"],["N","ine"],[" s","even"],[" S","even"],["S","even"],[" l","etters"],[" L","etters"],["L","etters"],[" l","etter"],[" L","etter"],["L","etter"]];
+const RANK = new Map(MERGES.map(([a, b], i) => [a + '\u0001' + b, i]));
+const MERGE_ID = new Map(MERGES.map(([a, b], i) => [a + b, 256 + i]));
+function mergeSyms(s, a, b){ const o = []; for (let i = 0; i < s.length; i++) { if (i < s.length - 1 && s[i] === a && s[i+1] === b) { o.push(a + b); i++; } else o.push(s[i]); } return o; }
+const SPECIAL = { '<|end|>': 50000, '<|system|>': 50001, '<|user|>': 50002, '<|assistant|>': 50003 };
+function encode(text){
+  const out = [];
+  for (const w of text.match(PRE) || []) {
+    let s = [...w];
+    while (s.length > 1) {
+      let best = -1, br = Infinity;
+      for (let i = 0; i < s.length - 1; i++) { const r = RANK.get(s[i] + '\u0001' + s[i+1]); if (r !== undefined && r < br) { br = r; best = i; } }
+      if (best < 0) break;
+      s = mergeSyms(s, s[best], s[best + 1]);
+    }
+    for (const t of s) out.push({ t, id: t.length === 1 ? Math.min(255, t.charCodeAt(0)) : MERGE_ID.get(t) });
+  }
+  return out;
+}
+
+/* =========================================================
+   Scene builders
+   ========================================================= */
+const BUILD = {};
+
+/* ---------- 0 / 14: journey map ---------- */
+const LANES = [
+  { name: 'Collect the data', y: 95, nodes: [[250, 'Crawl'], [550, 'Clean']] },
+  { name: 'Train the model', y: 255, nodes: [[640, 'Vocabulary'], [510, 'Pretrain'], [380, 'Base model'], [250, 'Fine-tune'], [120, 'Feedback']] },
+  { name: 'Answer your prompt', y: 415, nodes: [[150, 'Tokens'], [264, 'Vectors'], [378, 'Attention'], [492, 'Layers'], [606, 'Pick'], [720, 'Repeat']] },
+];
+function buildMap(st, lit){
+  const svg = S('svg', { viewBox: '0 0 800 500', preserveAspectRatio: 'xMidYMid meet' }, st);
+  const d = 'M60,95 H700 A80,80 0 0 1 700,255 H100 A80,80 0 0 0 100,415 H770';
+  S('path', { d, fill: 'none', stroke: '#2A3249', 'stroke-width': 4, 'stroke-linecap': 'round' }, svg);
+  const prog = S('path', { d, fill: 'none', stroke: '#F4A93C', 'stroke-width': 4, 'stroke-linecap': 'round' }, svg);
+  const L = prog.getTotalLength();
+  prog.style.strokeDasharray = L; prog.style.strokeDashoffset = lit ? 0 : L;
+  const nodes = []; let n = 0;
+  LANES.forEach(lane => {
+    S('text', { x: 130, y: lane.y - 42, fill: '#8C92A8', 'font-size': 15, 'font-family': 'Figtree, sans-serif', 'font-weight': 600 }, svg).textContent = lane.name;
+    lane.nodes.forEach(([x, label]) => {
+      n++;
+      const g = S('g', { style: 'cursor:pointer', tabindex: 0, role: 'button', 'aria-label': 'Step ' + n + ': ' + label }, svg);
+      const c = S('circle', { cx: x, cy: lane.y, r: 16, fill: lit ? '#F4A93C' : '#171D2C', stroke: '#F4A93C', 'stroke-width': 2.5 }, g);
+      const num = S('text', { x, y: lane.y + 5, 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 700, fill: lit ? '#1a1206' : '#ECE7DC', 'font-family': 'Figtree, sans-serif' }, g);
+      num.textContent = n;
+      S('text', { x, y: lane.y + 40, 'text-anchor': 'middle', 'font-size': 15, fill: '#ECE7DC', 'font-family': 'Figtree, sans-serif' }, g).textContent = label;
+      const step = n; g.onclick = () => show(step); g.onkeydown = e => { if (e.key === 'Enter') show(step); };
+      nodes.push({ x, y: lane.y, c, num });
+    });
+  });
+  if (lit) return;
+  const dot = S('circle', { r: 8, fill: '#F4A93C', style: 'filter:drop-shadow(0 0 8px #F4A93C)' }, svg);
+  nodes.forEach(nd => { let best = 1e9; for (let s = 0; s <= L; s += 4) { const q = prog.getPointAtLength(s); const dd = Math.hypot(q.x - nd.x, q.y - nd.y); if (dd < best) { best = dd; nd.at = s; } } });
+  const dur = 11000;
+  frames(now => {
+    const t = (now % (dur + 1800)) / dur;
+    const s = Math.min(1, t) * L;
+    const p = prog.getPointAtLength(s);
+    dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y);
+    prog.style.strokeDashoffset = L - s;
+    nodes.forEach(nd => { const hit = s >= nd.at - 8; nd.c.setAttribute('fill', hit ? '#F4A93C' : '#171D2C'); nd.num.setAttribute('fill', hit ? '#1a1206' : '#ECE7DC'); });
+  });
+}
+BUILD.map = st => buildMap(st, false);
+BUILD.recap = st => buildMap(st, true);
+
+/* ---------- 1: crawl ---------- */
+BUILD.crawl = st => {
+  const svg = S('svg', { viewBox: '0 0 800 500', preserveAspectRatio: 'xMidYMid meet' }, st);
+  const kinds = ['news','forum','recipe','wiki','code','blog','shop','paper','book','travel','sports','how-to','music','science','school','movies','health','history'];
+  const hues = ['#7DB8F0','#B39DF0','#7FD1B0','#E4707E','#F4A93C'];
+  const R = rng(7), pages = [];
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 6; c++) {
+    pages.push({ x: 95 + c * 122 + (R() - .5) * 30, y: 60 + r * 95 + (R() - .5) * 20 });
+  }
+  const links = new Set(), adj = pages.map(() => []);
+  const link = (a, b) => { if (a === b) return; const k = Math.min(a, b) + '-' + Math.max(a, b); if (links.has(k)) return; links.add(k); adj[a].push(b); adj[b].push(a); };
+  pages.forEach((p, i) => { if (i % 6 < 5) link(i, i + 1); if (i < 12) link(i, i + 6); if (R() < .45) link(i, Math.floor(R() * 18)); });
+  const lg = S('g', {}, svg);
+  links.forEach(k => { const [a, b] = k.split('-').map(Number); S('line', { x1: pages[a].x, y1: pages[a].y, x2: pages[b].x, y2: pages[b].y, stroke: '#2A3249', 'stroke-width': 1.5, 'stroke-dasharray': '4 5' }, lg); });
+  pages.forEach((p, i) => {
+    const g = S('g', { transform: `translate(${p.x - 32},${p.y - 23})` }, svg);
+    p.frame = S('rect', { width: 64, height: 46, rx: 5, fill: '#1E2538', stroke: '#2A3249', 'stroke-width': 1.5 }, g);
+    p.head = S('rect', { width: 64, height: 9, rx: 3, fill: hues[i % 5], opacity: .35 }, g);
+    [18, 26, 34].forEach((y, k) => S('rect', { x: 7, y, width: 50 - k * 12, height: 3.5, rx: 1.5, fill: '#3a4462' }, g));
+    const t = S('text', { x: 32, y: 62, 'text-anchor': 'middle', 'font-size': 12, fill: '#8C92A8', 'font-family': 'Figtree, sans-serif' }, g);
+    t.textContent = kinds[i];
+    p.g = g;
+  });
+  // archive
+  S('rect', { x: 220, y: 385, width: 360, height: 88, rx: 14, fill: '#1E2538', stroke: '#F4A93C', 'stroke-width': 1.5 }, svg);
+  S('text', { x: 400, y: 414, 'text-anchor': 'middle', 'font-size': 15, fill: '#8C92A8', 'font-family': 'Figtree, sans-serif' }, svg).textContent = 'Saved pages';
+  const cnt = S('text', { x: 400, y: 452, 'text-anchor': 'middle', 'font-size': 30, 'font-weight': 800, fill: '#ECE7DC', 'font-family': 'Bricolage Grotesque, Figtree, sans-serif' }, svg);
+  cnt.textContent = '0';
+  const bot = S('g', {}, svg);
+  S('circle', { r: 13, fill: '#F4A93C', opacity: .25 }, bot);
+  S('circle', { r: 7, fill: '#F4A93C', style: 'filter:drop-shadow(0 0 6px #F4A93C)' }, bot);
+  let at = 0; const seen = new Set([0]);
+  bot.setAttribute('transform', `translate(${pages[0].x},${pages[0].y})`);
+  const visit = i => {
+    const p = pages[i];
+    p.frame.setAttribute('stroke', '#F4A93C'); p.head.setAttribute('opacity', 1);
+    const cp = S('rect', { x: p.x - 12, y: p.y - 9, width: 24, height: 18, rx: 3, fill: '#F4A93C', opacity: .9 }, svg);
+    const sx = p.x - 12, sy = p.y - 9, tx = 388 + (Math.random() - .5) * 60, ty = 400;
+    tween(900, t => { cp.setAttribute('x', lerp(sx, tx, t)); cp.setAttribute('y', lerp(sy, ty, t)); cp.setAttribute('opacity', 1 - t * .9); }, () => cp.remove());
+  };
+  visit(0);
+  const hop = () => {
+    const opts = adj[at].filter(j => !seen.has(j));
+    const nxt = opts.length ? opts[Math.floor(Math.random() * opts.length)] : adj[at][Math.floor(Math.random() * adj[at].length)];
+    const a = pages[at], b = pages[nxt];
+    tween(380, t => bot.setAttribute('transform', `translate(${lerp(a.x, b.x, t)},${lerp(a.y, b.y, t)})`), () => { at = nxt; seen.add(nxt); visit(nxt); });
+  };
+  every(520, hop);
+  const TOTAL = 250e9;
+  after(300, () => tween(10000, t => { cnt.textContent = Math.round(TOTAL * t).toLocaleString('en-US'); }, () => { cnt.textContent = 'Hundreds of billions'; }, easeOut));
+};
+
+/* ---------- 2: clean ---------- */
+BUILD.clean = st => {
+  const cv = H('canvas', null, null, st);
+  const r = st.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const W = r.width, Hh = r.height;
+  cv.width = W * dpr; cv.height = Hh * dpr; cv.style.width = W + 'px'; cv.style.height = Hh + 'px';
+  const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+  const labels = [['Block bad','websites'],['Pull text','out of HTML'],['Keep one','language'],['Quality','check'],['Remove','duplicates'],['Hide personal','info']];
+  const drop = [.12, .06, .3, .3, .42, 0];
+  const gx = labels.map((_, i) => W * (0.15 + i * 0.125));
+  const binX = W * 0.9, top = Hh * 0.26, bot = Hh * 0.8;
+  const entered = Array(6).fill(0), passed = Array(6).fill(0);
+  const docs = []; let t0 = null, lastSpawn = 0, clean = 0;
+  const hues = ['#7DB8F0','#B39DF0','#7FD1B0','#E4707E','#F4A93C'];
+  const speed = W / 7000; // px per ms
+  function drawDoc(d){
+    ctx.globalAlpha = Math.max(0, d.a);
+    const w = 15, h = 19, x = d.x - w/2, y = d.y - h/2;
+    ctx.fillStyle = d.dead ? '#E4707E' : '#1E2538';
+    ctx.strokeStyle = d.dead ? '#E4707E' : (d.text ? '#ECE7DC' : d.hue);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 2.5); ctx.fill(); ctx.stroke();
+    if (!d.dead) {
+      if (!d.text) { ctx.fillStyle = d.hue; ctx.fillRect(x, y, w, 4); }
+      ctx.fillStyle = d.text ? '#ECE7DC' : '#56607e';
+      for (let k = 0; k < 3; k++) ctx.fillRect(x + 3, y + 7 + k * 3.8, w - 6 - (k === 2 ? 4 : 0), 1.5);
+      if (d.pii) { ctx.fillStyle = '#10141F'; ctx.fillRect(x + 2, y + 10, w - 4, 3.5); ctx.strokeStyle = '#F4A93C'; ctx.lineWidth = .8; ctx.strokeRect(x + 2, y + 10, w - 4, 3.5); }
+    }
+    ctx.globalAlpha = 1;
+  }
+  frames((now, dt) => {
+    if (t0 === null) t0 = now;
+    const el = now - t0;
+    if (el < 9500 && now - lastSpawn > 70) {
+      lastSpawn = now;
+      docs.push({ x: -10, y: lerp(top + 12, bot - 12, Math.random()), g: 0, dead: false, a: 1, vy: 0, hue: hues[Math.floor(Math.random() * 5)], text: false, pii: false });
+    }
+    ctx.clearRect(0, 0, W, Hh);
+    // gates
+    ctx.textAlign = 'center';
+    gx.forEach((x, i) => {
+      ctx.strokeStyle = '#2A3249'; ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+      ctx.beginPath(); ctx.moveTo(x, top - 6); ctx.lineTo(x, bot + 6); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = '#ECE7DC'; ctx.font = `600 ${Math.max(11, W / 70)}px Figtree, sans-serif`;
+      ctx.fillText(labels[i][0], x, top - 40); ctx.fillText(labels[i][1], x, top - 40 + Math.max(13, W / 58));
+      ctx.fillStyle = '#F4A93C'; ctx.font = `800 ${Math.max(14, W / 48)}px "Bricolage Grotesque", Figtree, sans-serif`;
+      let keep = 1; for (let k = 0; k <= i; k++) keep *= entered[k] ? passed[k] / entered[k] : 1;
+      ctx.fillText(entered[i] > 3 ? Math.round(100 * keep) + '%' : '', x, bot + 42);
+    });
+    ctx.fillStyle = '#8C92A8'; ctx.font = `500 ${Math.max(11, W / 72)}px Figtree, sans-serif`; ctx.textAlign = 'left';
+    ctx.fillText('Share of documents still left', gx[0] - 40, bot + 70);
+    // bin
+    ctx.fillStyle = '#1E2538'; ctx.strokeStyle = '#F4A93C'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(binX, top, W - binX - 16, bot - top, 10); ctx.fill(); ctx.stroke();
+    ctx.save(); ctx.translate(binX + (W - binX - 16) / 2, (top + bot) / 2); ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#ECE7DC'; ctx.font = `700 ${Math.max(13, W / 55)}px Figtree, sans-serif`;
+    ctx.fillText('Clean text: ' + clean, 0, 5); ctx.restore();
+    // docs
+    for (let k = docs.length - 1; k >= 0; k--) {
+      const d = docs[k];
+      if (d.dead) { d.x += speed * dt * .3; d.vy += .012 * dt; d.y += d.vy * dt * .06; d.a -= dt / 900; if (d.a <= 0) { docs.splice(k, 1); continue; } }
+      else {
+        d.x += speed * dt;
+        if (d.g < 6 && d.x >= gx[d.g]) {
+          entered[d.g]++;
+          if (Math.random() < drop[d.g]) { d.dead = true; d.vy = -1; }
+          else { passed[d.g]++; if (d.g === 1) d.text = true; if (d.g === 5) d.pii = true; }
+          d.g++;
+        }
+        if (d.x > binX + 10) { clean++; docs.splice(k, 1); continue; }
+      }
+      drawDoc(d);
+    }
+    if (el > 9500 && docs.length === 0) return false;
+  });
+};
+
+/* ---------- 3: BPE merges ---------- */
+BUILD.bpe = st => {
+  const words = [['low', 5], ['lower', 2], ['newest', 6], ['widest', 3]].map(([w, c]) => ({ s: [...w], c }));
+  const wrap = H('div', 'bpe', null, st);
+  const left = H('div', 'bpe-words', null, wrap);
+  H('h4', null, 'Training text: each word and how often it appears', left);
+  const rows = words.map(() => H('div', 'bpe-row', null, left));
+  const status = H('div', 'bpe-status', 'Start: every word is split into single letters.', left);
+  const vwrap = H('div', 'bpe-vocab', null, wrap);
+  H('h4', null, 'Vocabulary', vwrap);
+  const vbox = H('div', 'v', null, vwrap);
+  [...new Set(words.flatMap(w => w.s))].sort().forEach(ch => H('span', 'tok', ch, vbox));
+  function render(fresh){
+    words.forEach((w, i) => {
+      rows[i].innerHTML = '';
+      w.s.forEach(sym => { const t = H('span', 'tok' + (fresh && sym === fresh ? ' pop' : ''), esc(sym), rows[i]); });
+      H('span', 'cnt', '×' + w.c, rows[i]);
+    });
+  }
+  render();
+  let step = 0;
+  const cycle = () => {
+    const pc = new Map();
+    words.forEach(w => { for (let i = 0; i < w.s.length - 1; i++) { const k = w.s[i] + '|' + w.s[i+1]; pc.set(k, (pc.get(k) || 0) + w.c); } });
+    let best = null, bc = 0; for (const [k, c] of pc) if (c > bc) { bc = c; best = k; }
+    if (!best || step >= 7) { status.innerHTML = 'A real tokenizer keeps going like this <b>tens of thousands</b> of times, on billions of words.'; return; }
+    const [a, b] = best.split('|');
+    words.forEach((w, i) => { const kids = rows[i].querySelectorAll('.tok'); for (let j = 0; j < w.s.length - 1; j++) if (w.s[j] === a && w.s[j+1] === b) { kids[j].classList.add('hl'); kids[j+1].classList.add('hl'); } });
+    status.innerHTML = `Most common pair: <b>${esc(a)} + ${esc(b)}</b>, seen ${bc} times.`;
+    after(1200, () => {
+      words.forEach(w => w.s = mergeSyms(w.s, a, b));
+      render(a + b);
+      vbox.querySelectorAll('.new').forEach(n => n.classList.remove('new'));
+      H('span', 'tok new pop', esc(a + b), vbox);
+      status.innerHTML = `Merged into a new token: <b>${esc(a + b)}</b>`;
+      step++;
+      after(1300, cycle);
+    });
+  };
+  after(1400, cycle);
+};
+
+/* ---------- 4: pretraining ---------- */
+BUILD.pretrain = st => {
+  const wrap = H('div', 'pt', null, st);
+  const sent = H('div', 'pt-sent', null, wrap);
+  const mid = H('div', 'pt-mid', null, wrap);
+  const bl = H('div', null, '<h4>The model\'s guesses for the next token</h4>', mid);
+  const bars = H('div', 'bars', null, bl);
+  const verdict = H('div', 'verdict', '', bl);
+  const lossBox = H('div', 'pt-loss', '<h4>How wrong it is (the loss)</h4>', mid);
+  const svg = S('svg', { viewBox: '0 0 300 170' }, lossBox);
+  S('path', { class: 'lossaxis', d: 'M30,10 V150 H295' }, svg);
+  S('text', { x: 26, y: 18, 'text-anchor': 'end', fill: '#8C92A8', 'font-size': 11 }, svg).textContent = 'high';
+  S('text', { x: 26, y: 150, 'text-anchor': 'end', fill: '#8C92A8', 'font-size': 11 }, svg).textContent = 'low';
+  S('text', { x: 295, y: 166, 'text-anchor': 'end', fill: '#8C92A8', 'font-size': 11 }, svg).textContent = 'training time';
+  const line = S('polyline', { class: 'lossline', points: '' }, svg);
+  const stepEl = H('div', 'pt-step', '', lossBox);
+  const gpuBox = H('div', null, '<h4>GPUs working in parallel</h4>', wrap);
+  const gpus = H('div', 'gpus', null, gpuBox);
+  for (let i = 0; i < 144; i++) H('i', null, null, gpus);
+  const gcells = [...gpus.children];
+
+  const toks = ['The', ' cat', ' sat', ' on', ' the', ' mat', '.'];
+  const finals = [.28, .36, .72, .86, .46, .82];
+  const distract = [[' dog', ' man', ' first', ' banana'], [' is', ' was', ' ran', ' quantum'], [' in', ' down', ' there', ' purple'], [' a', ' my', ' his', ' seven'], [' floor', ' sofa', ' bed', ' cloud'], [',', ' and', ' today', ' zebra']];
+  const early = [.012, .019, .026, .034], late = [.4, .2, .07, .004];
+  let pos = 0, p = 0, pts = [], done = false;
+  const probs = () => {
+    const e = easeInOut(p);
+    const pc = lerp(.008, finals[pos], e);
+    const list = [{ t: toks[pos + 1], v: pc, ok: true }];
+    distract[pos].forEach((t, k) => list.push({ t, v: lerp(early[k] * (0.8 + 0.4 * ((pos * 7 + k) % 5) / 5), late[k] * (1 - pc), e) }));
+    return list.sort((a, b) => b.v - a.v);
+  };
+  const drawSent = reveal => {
+    sent.innerHTML = '';
+    for (let i = 0; i <= pos; i++) H('span', 'tok c' + (i % 5), esc(toks[i]), sent);
+    H('span', 'tok next' + (reveal ? ' ok pop' : ''), reveal ? esc(toks[pos + 1]) : '?', sent);
+  };
+  const drawBars = reveal => {
+    const list = probs();
+    bars.innerHTML = '';
+    list.forEach(it => {
+      const row = H('div', 'brow' + (reveal && it.ok ? ' correct' : ''), `<span class="lab">${esc(it.t)}</span><div class="track"><div class="fill" style="width:${Math.max(.5, it.v * 100)}%"></div></div><span class="pct">${(it.v * 100).toFixed(it.v < .1 ? 1 : 0)}%</span>`, bars);
+    });
+    return list;
+  };
+  const cycle = () => {
+    if (done) return;
+    drawSent(false); drawBars(false); verdict.textContent = ''; verdict.className = 'verdict';
+    after(900, () => {
+      const list = drawBars(true); drawSent(true);
+      const right = list[0].ok;
+      verdict.className = 'verdict ' + (right ? 'good' : 'bad');
+      verdict.textContent = right ? 'Top guess was right. Small adjustment.' : 'Wrong. The weights get nudged toward "' + toks[pos + 1].trim() + '".';
+      const pc = list.find(x => x.ok).v;
+      const loss = -Math.log(pc);
+      pts.push([30 + p * 265, 150 - Math.min(1, loss / 5) * 140]);
+      line.setAttribute('points', pts.map(q => q.join(',')).join(' '));
+      after(1000, () => {
+        pos++;
+        if (pos >= toks.length - 1) { pos = 0; if (p >= 1) { done = true; verdict.className = 'verdict good'; verdict.textContent = 'Trained. The right token is now the top guess almost every time.'; return; } }
+        cycle();
+      });
+    });
+  };
+  tween(22000, t => { p = t; stepEl.textContent = 'Training step ' + Math.round(t * 1_000_000).toLocaleString('en-US'); }, null, t => t);
+  every(110, () => { gcells.forEach(c => { if (Math.random() < .25) c.classList.toggle('on', !done && Math.random() < .7); }); if (done) gcells.forEach(c => c.classList.remove('on')); });
+  cycle();
+};
+
+/* ---------- 5: base model ---------- */
+function typeInto(el, text, ms, done){
+  let i = 0; el.classList.add('caret');
+  const id = every(ms, () => { i++; el.textContent = text.slice(0, i); if (i >= text.length) { stop(id); el.classList.remove('caret'); if (done) done(); } });
+}
+BUILD.base = st => {
+  const w = H('div', 'two', null, st);
+  const b1 = H('div', 'box', '<h4>Base model, after pretraining</h4><div class="txt"><span class="you">What is the capital of France?</span><span class="gen"></span></div>', w);
+  const b2 = H('div', 'box good', '<h4>Assistant, after the next two steps</h4><div class="txt"><span class="you">What is the capital of France?</span>\n<span class="gen"></span></div>', w);
+  b2.style.opacity = 0;
+  after(700, () => typeInto(b1.querySelector('.gen'), '\nWhat is the capital of Germany?\nWhat is the capital of Italy?\nWhat is the capital of Spain?', 38, () => {
+    after(900, () => { b2.style.opacity = 1; after(600, () => typeInto(b2.querySelector('.gen'), 'The capital of France is Paris.', 45)); });
+  }));
+};
+
+/* ---------- 6: SFT ---------- */
+const EXAMPLES = [
+  ['You are a helpful assistant.', 'How many legs does a spider have?', 'A spider has eight legs.'],
+  ['You are a helpful assistant.', 'Translate "good morning" into German.', 'Guten Morgen!'],
+  ['You are a helpful assistant.', 'What is 12 times 4?', '12 times 4 is 48.'],
+];
+function chip(parent, t, cls){ return H('span', 'tok ' + cls, esc(t), parent); }
+BUILD.sft = st => {
+  const w = H('div', 'sft', null, st);
+  const count = H('div', 'sft-count', '', w);
+  const doc = H('div', 'sft-doc', null, w);
+  H('div', 'legend', '<span><i style="background:rgba(244,169,60,.35);border:1px solid #F4A93C"></i>The model learns to write these</span><span><i style="background:#1E2538;border:1px solid #2A3249"></i>Context it only reads</span><span><i style="border:1.5px dashed #8C92A8"></i>Special tokens</span>', w);
+  let ex = 0;
+  const show1 = () => {
+    const [sys, usr, ans] = EXAMPLES[ex % EXAMPLES.length];
+    count.innerHTML = `Training example <b>${(ex + 1).toLocaleString('en-US')}</b> of many thousands`;
+    doc.className = 'sft-doc'; doc.innerHTML = '';
+    const parts = [];
+    const add = (t, cls) => parts.push([t, cls]);
+    add('<|system|>', 'special ctx'); encode(sys).forEach((x, i) => add(x.t, 'ctx c1'));
+    add('BR'); add('<|user|>', 'special ctx'); encode(usr).forEach(x => add(x.t, 'ctx c2'));
+    add('BR'); add('<|assistant|>', 'special ctx'); encode(ans).forEach(x => add(x.t, 'ans')); add('<|end|>', 'special ans');
+    let k = 0;
+    const id = every(55, () => {
+      const [t, cls] = parts[k++];
+      if (t === 'BR') H('div', 'brk', null, doc); else chip(doc, t, cls + ' pop');
+      if (k >= parts.length) { stop(id); after(500, () => doc.classList.add('learn')); after(4200, () => { ex++; show1(); }); }
+    });
+  };
+  show1();
+};
+
+/* ---------- 7: RLHF ---------- */
+BUILD.rlhf = st => {
+  const w = H('div', 'rl', null, st);
+  H('div', 'rl-prompt', '<span>Prompt</span>Explain gravity to a 7-year-old.', w);
+  const pair = H('div', 'rl-pair', null, w);
+  const A = H('div', 'rl-card', '<span class="badge">Preferred</span><b>Answer A</b>Gravity is an invisible pull. It makes things fall down and keeps your feet on the ground, like Earth is giving everything a gentle hug.', pair);
+  const B = H('div', 'rl-card', '<span class="badge">Preferred</span><b>Answer B</b>Gravity is the curvature of spacetime described by Einstein\'s field equations, where mass-energy determines the metric tensor.', pair);
+  const bottom = H('div', 'rl-bottom', null, w);
+  const rm = H('div', 'rl-panel', '<h4>A reward model learns to score answers</h4>', bottom);
+  const row = (lab, col) => { const r = H('div', 'rm-row', `<span>${lab}</span><div class="track"><div class="fill" style="background:${col}"></div></div><span class="sc">0</span>`, rm); return r; };
+  const ra = row('Answer A', '#F4A93C'), rb = row('Answer B', '#7DB8F0');
+  H('div', 'rm-note', 'Trained on thousands of human choices like this one.', rm);
+  const lp = H('div', 'rl-panel', '<h4>The model practices and improves</h4>', bottom);
+  const lw = H('div', 'loopwrap', null, lp);
+  const cyc = S('svg', { viewBox: '0 0 380 110' }, lw);
+  const stations = [['Write an answer', 10], ['Score it', 135], ['Adjust weights', 260]];
+  const boxes = stations.map(([t, x]) => {
+    const r = S('rect', { x, y: 10, width: 110, height: 40, rx: 20, fill: '#10141F', stroke: '#2A3249', 'stroke-width': 1.5 }, cyc);
+    S('text', { x: x + 55, y: 35, 'text-anchor': 'middle', fill: '#ECE7DC', 'font-size': 13.5, 'font-family': 'Figtree, sans-serif' }, cyc).textContent = t;
+    return r;
+  });
+  S('path', { d: 'M315,50 C315,100 65,100 65,50', fill: 'none', stroke: '#2A3249', 'stroke-width': 2, 'stroke-dasharray': '5 5' }, cyc);
+  S('text', { x: 190, y: 104, 'text-anchor': 'middle', fill: '#8C92A8', 'font-size': 12, 'font-family': 'Figtree, sans-serif' }, cyc).textContent = 'repeat many times';
+  const ch = S('svg', { viewBox: '0 0 380 150' }, lw);
+  S('path', { d: 'M30,10 V125 H375', fill: 'none', stroke: '#2A3249', 'stroke-width': 2 }, ch);
+  S('text', { x: 200, y: 144, 'text-anchor': 'middle', fill: '#8C92A8', 'font-size': 12 }, ch).textContent = 'practice rounds';
+  S('text', { x: 18, y: 68, 'text-anchor': 'middle', fill: '#8C92A8', 'font-size': 12, transform: 'rotate(-90 18 68)' }, ch).textContent = 'average score';
+  const pl = S('polyline', { fill: 'none', stroke: '#F4A93C', 'stroke-width': 3, 'stroke-linejoin': 'round', points: '' }, ch);
+  const cur = H('div', 'cursor', '<svg viewBox="0 0 24 24"><path d="M4 2l16 10-7 1.5L9.5 21z" fill="#ECE7DC" stroke="#10141F" stroke-width="1.5"/></svg>', w);
+  after(300, () => A.classList.add('in'));
+  after(600, () => B.classList.add('in'));
+  after(1400, () => { cur.style.opacity = 1; cur.style.left = '30%'; cur.style.top = '32%'; });
+  after(2600, () => { cur.classList.add('click'); A.classList.add('win'); B.classList.add('lose'); });
+  after(2800, () => cur.classList.remove('click'));
+  after(3500, () => { cur.style.opacity = 0; rm.classList.add('in'); });
+  after(4000, () => {
+    ra.querySelector('.fill').style.width = '87%'; rb.querySelector('.fill').style.width = '21%';
+    tween(1200, t => { ra.querySelector('.sc').textContent = (8.7 * t).toFixed(1); rb.querySelector('.sc').textContent = (2.1 * t).toFixed(1); });
+  });
+  after(5600, () => {
+    lp.classList.add('in');
+    const pts = [];
+    let i = 0;
+    let st8 = 0;
+    every(650, () => { st8 = (st8 + 1) % 3; boxes.forEach((b, k) => { b.setAttribute('stroke', k === st8 ? '#F4A93C' : '#2A3249'); b.setAttribute('fill', k === st8 ? 'rgba(244,169,60,.18)' : '#10141F'); }); });
+    const id = every(140, () => {
+      const x = 32 + i * 11.5, y = 120 - 100 * (1 - Math.exp(-i / 9)) + (Math.random() - .5) * 10;
+      pts.push(x + ',' + Math.max(12, y)); pl.setAttribute('points', pts.join(' '));
+      if (++i > 29) stop(id);
+    });
+  });
+};
+
+/* ---------- 8: tokenize your prompt ---------- */
+BUILD.tokenize = st => {
+  const w = H('div', 'tk', null, st);
+  const lab = H('label', null, 'Your message', w); lab.htmlFor = 'tkin';
+  const inp = H('input', null, null, lab); inp.id = 'tkin'; inp.type = 'text'; inp.autocomplete = 'off'; inp.spellcheck = false;
+  H('h4', null, 'What the model actually receives', w);
+  const out = H('div', 'tk-out', null, w);
+  const stats = H('div', 'tk-stats', '', w);
+  const tries = H('div', 'tk-try', '<span>Try:</span>', w);
+  ['How many r\'s are in strawberry?', 'Antidisestablishmentarianism', 'Servus! Wie geht es dir?', '12345 + 67890 = ?'].forEach(t => {
+    const b = H('button', 'hbtn', esc(t), tries);
+    b.onclick = () => { stop(typing); inp.value = t; render(true); };
+  });
+  let typing = 0;
+  const SYS = 'You are a helpful assistant.';
+  const render = animate => {
+    out.innerHTML = '';
+    const items = [];
+    items.push({ t: '<|system|>', id: SPECIAL['<|system|>'], sp: true });
+    encode(SYS).forEach(x => items.push(x));
+    items.push({ br: true });
+    items.push({ t: '<|user|>', id: SPECIAL['<|user|>'], sp: true });
+    const user = encode(inp.value);
+    user.forEach(x => items.push({ ...x, u: true }));
+    items.push({ br: true });
+    items.push({ t: '<|assistant|>', id: SPECIAL['<|assistant|>'], sp: true });
+    let ci = 0;
+    items.forEach((x, i) => {
+      if (x.br) { H('div', 'brk', null, out); return; }
+      const c = H('span', 'tkc' + (animate ? ' pop' : ''), null, out);
+      if (animate) c.style.animationDelay = (i * 45) + 'ms';
+      const tk = H('span', 'tok ' + (x.sp ? 'special' : 'c' + (ci++ % 5)), esc(x.t), c);
+      H('span', 'id', String(x.id), c);
+      if (!x.u && !x.sp) tk.style.opacity = .5;
+    });
+    stats.innerHTML = `<b>${user.length}</b> tokens from your <b>${inp.value.length}</b> characters, plus ${items.filter(x => !x.br).length - user.length} tokens of chat format`;
+  };
+  inp.addEventListener('input', () => render(false));
+  const text = 'Why is the sky blue?';
+  let i = 0; render(false);
+  after(500, () => { typing = every(70, () => { inp.value = text.slice(0, ++i); render(false); if (i >= text.length) { stop(typing); render(true); } }); });
+  inp.addEventListener('focus', () => stop(typing));
+};
+
+/* ---------- 9: embeddings ---------- */
+function vecVals(key, n = 12){ const R = rng(hash(key)); return Array.from({ length: n }, () => R() * 2 - 1); }
+function colorOf(v){ const a = Math.min(1, Math.abs(v)) * .9 + .08; return v >= 0 ? `rgba(244,169,60,${a})` : `rgba(125,184,240,${a})`; }
+function vecEl(parent, vals){ const v = H('span', 'vec', null, parent); vals.forEach(() => H('i', null, null, v)); return v; }
+function fillVec(v, vals, stagger = 30){ [...v.children].forEach((c, i) => after(i * stagger, () => c.style.background = colorOf(vals[i]))); }
+BUILD.embed = st => {
+  const w = H('div', 'em', null, st);
+  const tabs = H('div', 'em-tabs', null, w);
+  const tA = H('button', 'hbtn on', 'Looking up the numbers', tabs), tB = H('button', 'hbtn', 'Meaning map', tabs);
+  const left = H('div', 'em-left', null, w);
+  H('h4', null, 'The embedding table: one row of numbers per token', left);
+  const table = H('div', 'etable', null, left);
+  const words = [' sky', ' is', ' blue'];
+  const rowsToks = [' a', ' blue', ' cat', ' is', ' of', ' sky', ' the', ' you'];
+  const rows = {};
+  rowsToks.forEach(t => {
+    const enc = encode(t)[0];
+    const r = H('div', 'erow', `<span class="lab">${esc(t)}  ${enc.id}</span>`, table);
+    const v = vecEl(r, vecVals(t)); [...v.children].forEach((c, i) => c.style.background = colorOf(vecVals(t)[i]));
+    rows[t] = r;
+  });
+  H('h4', null, 'Token vector + position vector = what the model uses', left);
+  const sum = H('div', 'esum', null, left);
+  const lines = words.map((t, i) => {
+    const r = H('div', 'esr', null, sum);
+    H('span', 'tok c' + i, esc(t), r);
+    const a = vecEl(r, []); for (let k = 0; k < 12; k++) H('i', null, null, a);
+    H('span', 'op', '+', r);
+    const b = vecEl(r, []); for (let k = 0; k < 12; k++) H('i', null, null, b);
+    H('span', 'op', '=', r);
+    const c = vecEl(r, []); for (let k = 0; k < 12; k++) H('i', null, null, c);
+    return { t, a, b, c, i };
+  });
+  lines.forEach((L, n) => {
+    const base = 600 + n * 1900;
+    after(base, () => { Object.values(rows).forEach(r => r.classList.remove('hit')); rows[L.t].classList.add('hit'); });
+    after(base + 400, () => fillVec(L.a, vecVals(L.t)));
+    after(base + 900, () => fillVec(L.b, vecVals('pos' + n).map(v => v * .5)));
+    after(base + 1400, () => { const tv = vecVals(L.t), pv = vecVals('pos' + n); fillVec(L.c, tv.map((v, k) => v + pv[k] * .5)); });
+  });
+  H('div', 'em-cap', '<span><i style="background:#F4A93C"></i>positive number</span><span><i style="background:#7DB8F0"></i>negative number</span><span>Only 12 of the hundreds of numbers are shown</span>', left);
+  after(600 + 3 * 1900, () => Object.values(rows).forEach(r => r.classList.remove('hit')));
+
+  const right = H('div', 'em-right', null, w);
+  const view = k => { tA.classList.toggle('on', !k); tB.classList.toggle('on', k); left.style.display = k ? 'none' : ''; right.style.display = k ? '' : 'none'; };
+  tA.onclick = () => view(0); tB.onclick = () => { view(1); startMap(); };
+  view(0);
+  const svg = S('svg', { viewBox: '0 0 420 470', preserveAspectRatio: 'xMidYMid meet' }, right);
+  S('text', { x: 24, y: 34, fill: '#8C92A8', 'font-size': 14, 'font-weight': 600, 'font-family': 'Figtree, sans-serif' }, svg).textContent = 'Thousands of dimensions, squashed to 2D';
+  const defs = S('defs', {}, svg);
+  const mk = S('marker', { id: 'ah', viewBox: '0 0 10 10', refX: 8, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs);
+  S('path', { d: 'M0,0 L10,5 L0,10 z', fill: '#F4A93C' }, mk);
+  const groups = [
+    { c: '#7FD1B0', pts: [['cat', 95, 110], ['dog', 145, 95], ['lion', 115, 150], ['horse', 170, 135]] },
+    { c: '#B39DF0', pts: [['blue', 300, 95], ['red', 345, 125], ['green', 290, 140], ['yellow', 345, 80]] },
+    { c: '#7DB8F0', pts: [['Austria', 90, 300], ['France', 130, 345], ['Japan', 100, 395]] },
+    { c: '#F4A93C', pts: [['Vienna', 215, 255], ['Paris', 255, 300], ['Tokyo', 225, 350]] },
+    { c: '#E4707E', pts: [['run', 330, 390], ['walk', 365, 420], ['swim', 320, 435]] },
+  ];
+  const all = [];
+  groups.forEach((g, gi) => g.pts.forEach(([t, x, y]) => {
+    const e = S('g', { class: 'mappt', opacity: 0 }, svg);
+    S('circle', { cx: x, cy: y, r: 6, fill: g.c }, e);
+    const lft = gi === 2;
+    S('text', { x: lft ? x - 10 : x + 10, y: y + 5, 'text-anchor': lft ? 'end' : 'start', fill: '#ECE7DC', 'font-size': 15, 'font-family': 'Figtree, sans-serif' }, e).textContent = t;
+    all.push(e);
+  }));
+  let mapStarted = false;
+  function startMap(){
+    if (mapStarted) return; mapStarted = true;
+  all.forEach((e, i) => after(400 + i * 110, () => e.setAttribute('opacity', 1)));
+  const arrows = [[90, 300, 215, 255], [130, 345, 255, 300], [100, 395, 225, 350]];
+  after(2800, () => arrows.forEach(([x1, y1, x2, y2], i) => after(i * 500, () => {
+    const ln = S('line', { x1: x1 + 6, y1, x2: x1 + 6, y2: y1, stroke: '#F4A93C', 'stroke-width': 2, 'stroke-dasharray': '5 4', 'marker-end': 'url(#ah)' }, svg);
+    tween(600, t => { ln.setAttribute('x2', lerp(x1 + 6, x2 - 8, t)); ln.setAttribute('y2', lerp(y1, y2 + 2, t)); });
+  })));
+  after(4600, () => {
+    const t = S('text', { x: 40, y: 230, fill: '#F4A93C', 'font-size': 14, 'font-weight': 600, 'font-family': 'Figtree, sans-serif', opacity: 0 }, svg);
+    t.textContent = 'Same direction = "capital of"';
+    tween(500, k => t.setAttribute('opacity', k));
+  });
+  }
+  after(600 + 3 * 1900 + 1200, () => { view(1); startMap(); });
+};
+
+/* ---------- 10: attention ---------- */
+const AT_TOKS = ['The', 'animal', "didn", "'t", 'cross', 'the', 'street', 'because', 'it', 'was', 'too', 'tired'];
+function atWeights(head, i){
+  const w = Array(i + 1).fill(0.02);
+  const set = o => { for (const k in o) if (+k <= i) w[+k] = o[k]; };
+  if (head === 'meaning') {
+    w[i] = .15; w[0] = Math.max(w[0], .08);
+    const M = { 1: { 0: .45, 1: .5 }, 2: { 1: .45 }, 4: { 1: .4, 4: .2 }, 6: { 4: .35, 5: .15 }, 7: { 4: .2, 6: .2 }, 8: { 1: .62, 6: .12, 8: .1 }, 9: { 8: .45, 1: .2 }, 11: { 8: .35, 1: .3 } };
+    if (M[i]) set(M[i]);
+  } else if (head === 'previous') {
+    w[i] = .2; if (i > 0) w[i - 1] = .7; else w[0] = 1;
+  } else {
+    w[i] = .3; if (i > 0) w[i - 1] = .15;
+    const g = { 2: { 1: .5 }, 3: { 2: .6 }, 4: { 2: .4, 1: .25 }, 6: { 5: .6 }, 7: { 4: .35, 3: .2 }, 8: { 7: .3 }, 9: { 8: .6 }, 10: { 9: .3 }, 11: { 9: .4, 10: .3 } }[i];
+    if (g) set(g);
+  }
+  const s = w.reduce((a, b) => a + b, 0);
+  return w.map(v => v / s);
+}
+BUILD.attention = st => {
+  const w = H('div', 'at', null, st);
+  const svg = S('svg', { viewBox: '0 0 900 380', preserveAspectRatio: 'xMidYMid meet' }, w);
+  const bottom = H('div', 'at-bottom', null, w);
+  const heads = H('div', 'heads', '<h4>Pick an attention head</h4>', bottom);
+  const hb = H('div', 'hb', null, heads);
+  const HEADS = [['meaning', 'Who is "it"?'], ['grammar', 'Grammar'], ['previous', 'Previous word']];
+  const hbtns = HEADS.map(([k, l]) => { const b = H('button', 'hbtn', l, hb); b.onclick = () => { auto && stop(auto); auto = null; head = k; draw(); }; b.dataset.k = k; return b; });
+  const hw = H('div', 'heatwrap', null, bottom);
+  const heat = H('div', 'heat', null, hw); heat.style.gridTemplateColumns = 'repeat(12,12px)';
+  const cells = []; for (let r = 0; r < 12; r++) for (let c = 0; c < 12; c++) cells.push(H('i', null, null, heat));
+  H('div', null, 'All attention weights of this head. The empty triangle: tokens can\'t see the future.', hw);
+  // layout tokens
+  const cw = 11, pad = 10, gap = 6;
+  const widths = AT_TOKS.map(t => t.length * cw + pad * 1.4);
+  const total = widths.reduce((a, b) => a + b, 0) + gap * 11;
+  let x = (900 - total) / 2;
+  const TY = 300;
+  const arcG = S('g', {}, svg), labG = S('g', {}, svg);
+  const tk = AT_TOKS.map((t, i) => {
+    const g = S('g', { class: 'attok' }, svg);
+    const r = S('rect', { x, y: TY, width: widths[i], height: 40, rx: 8, fill: '#1E2538', stroke: '#2A3249', 'stroke-width': 1.5 }, g);
+    const tx = S('text', { x: x + widths[i] / 2, y: TY + 26, 'text-anchor': 'middle', fill: '#ECE7DC', 'font-size': 18, 'font-family': 'JetBrains Mono, monospace' }, g);
+    tx.textContent = t;
+    const o = { g, r, tx, cx: x + widths[i] / 2 };
+    g.onclick = () => { auto && stop(auto); auto = null; focus = i; draw(); };
+    x += widths[i] + gap;
+    return o;
+  });
+  let head = 'meaning', focus = 1, auto = null;
+  function draw(){
+    hbtns.forEach(b => b.classList.toggle('on', b.dataset.k === head));
+    arcG.innerHTML = ''; labG.innerHTML = '';
+    const wts = atWeights(head, focus);
+    tk.forEach((o, j) => {
+      const fut = j > focus;
+      o.g.setAttribute('opacity', fut ? .28 : 1);
+      o.r.setAttribute('stroke', j === focus ? '#F4A93C' : '#2A3249');
+      o.r.setAttribute('fill', j === focus ? 'rgba(244,169,60,.18)' : '#1E2538');
+      o.r.setAttribute('stroke-width', j === focus ? 2.5 : 1.5);
+    });
+    wts.forEach((v, j) => {
+      if (j === focus) return;
+      const x1 = tk[focus].cx, x2 = tk[j].cx, h = Math.min(250, 40 + Math.abs(x1 - x2) * .42);
+      S('path', { d: `M${x1},${TY - 4} Q${(x1 + x2) / 2},${TY - 4 - h * 1.3} ${x2},${TY - 4}`, fill: 'none', stroke: '#F4A93C', 'stroke-width': 1 + 16 * v, opacity: .15 + .85 * Math.min(1, v * 1.6), 'stroke-linecap': 'round' }, arcG);
+      if (v > .09) S('text', { x: (x1 + x2) / 2, y: TY - 12 - h * .65, 'text-anchor': 'middle', fill: '#ECE7DC', 'font-size': 20, 'font-weight': 800, stroke: '#171D2C', 'stroke-width': 6, 'paint-order': 'stroke', 'font-family': 'Figtree, sans-serif' }, labG).textContent = Math.round(v * 100) + '%';
+    });
+    const selfv = wts[focus];
+    S('text', { x: tk[focus].cx, y: TY + 64, 'text-anchor': 'middle', fill: '#8C92A8', 'font-size': 15, 'font-family': 'Figtree, sans-serif' }, labG).textContent = 'itself ' + Math.round(selfv * 100) + '%';
+    if (focus < 11) S('text', { x: (tk[Math.min(11, focus + 1)].cx + tk[11].cx) / 2, y: TY + 64, 'text-anchor': 'middle', fill: '#8C92A8', 'font-size': 15, 'font-family': 'Figtree, sans-serif' }, labG).textContent = 'hidden: comes later';
+    for (let r = 0; r < 12; r++) { const rw = atWeights(head, r); for (let c = 0; c < 12; c++) { const v = c <= r ? rw[c] : 0; cells[r * 12 + c].style.background = c <= r ? `rgba(244,169,60,${.08 + v * .92})` : 'transparent'; cells[r * 12 + c].style.outline = r === focus ? '1px solid rgba(236,231,220,.5)' : 'none'; } }
+  }
+  draw();
+  auto = every(800, () => { focus++; if (focus >= 8) { focus = 8; draw(); stop(auto); auto = null; return; } draw(); });
+};
+
+/* ---------- 11: layers ---------- */
+BUILD.layers = st => {
+  const w = H('div', 'ly', null, st);
+  const svg = S('svg', { viewBox: '0 0 520 600', preserveAspectRatio: 'xMidYMid meet' }, w);
+  const right = H('div', 'ly-right', '<h4>Best guess for the next token at this depth</h4>', w);
+  const N = 12, bh = 30, gapY = 9, y0 = 510;
+  const blocks = [];
+  // residual line
+  S('line', { x1: 260, y1: y0 + 20, x2: 260, y2: y0 - N * (bh + gapY) - 6, stroke: '#2A3249', 'stroke-width': 3 }, svg);
+  for (let i = 0; i < N; i++) {
+    const y = y0 - (i + 1) * (bh + gapY);
+    const g = S('g', {}, svg);
+    const a = S('rect', { x: 110, y, width: 148, height: bh, rx: 6, fill: '#1E2538', stroke: '#2A3249', 'stroke-width': 1.5 }, g);
+    const m = S('rect', { x: 262, y, width: 148, height: bh, rx: 6, fill: '#1E2538', stroke: '#2A3249', 'stroke-width': 1.5 }, g);
+    S('text', { x: 96, y: y + 20, 'text-anchor': 'end', fill: '#8C92A8', 'font-size': 13, 'font-family': 'Figtree, sans-serif' }, g).textContent = 'Block ' + (i + 1);
+    S('text', { x: 184, y: y + 20, 'text-anchor': 'middle', fill: '#8C92A8', 'font-size': 13, 'font-family': 'Figtree, sans-serif' }, g).textContent = 'Attention';
+    S('text', { x: 336, y: y + 20, 'text-anchor': 'middle', fill: '#8C92A8', 'font-size': 13, 'font-family': 'Figtree, sans-serif' }, g).textContent = 'MLP';
+    blocks.push({ a, m, y });
+  }
+  const topY = y0 - N * (bh + gapY) - 20;
+  S('text', { x: 260, y: topY, 'text-anchor': 'middle', fill: '#F4A93C', 'font-size': 15, 'font-weight': 600, 'font-family': 'Figtree, sans-serif' }, svg).textContent = 'Scores for every possible next token';
+  // input tokens
+  const inTok = ['The', 'capital', 'of', 'Austria', 'is'];
+  let ix = 70;
+  inTok.forEach((t, i) => { const wd = t.length * 10 + 22; S('rect', { x: ix, y: y0 + 26, width: wd, height: 32, rx: 7, fill: i === 4 ? 'rgba(244,169,60,.2)' : '#1E2538', stroke: i === 4 ? '#F4A93C' : '#2A3249' }, svg); S('text', { x: ix + wd / 2, y: y0 + 47, 'text-anchor': 'middle', fill: '#ECE7DC', 'font-size': 15, 'font-family': 'JetBrains Mono, monospace' }, svg).textContent = t; ix += wd + 8; });
+  // travelling vector
+  const vg = S('g', {}, svg);
+  const vcells = Array.from({ length: 8 }, (_, k) => S('rect', { x: 432 + (k % 2) * 20, y: Math.floor(k / 2) * 8 - 2, width: 18, height: 6.5, rx: 1.5, fill: '#7DB8F0' }, vg));
+  S('text', { x: 451, y: -8, 'text-anchor': 'middle', fill: '#8C92A8', 'font-size': 13, 'font-family': 'Figtree, sans-serif' }, vg).textContent = 'vector';
+  const paint = seed => { const v = vecVals('ly' + seed, 8); vcells.forEach((c, k) => c.setAttribute('fill', colorOf(v[k]))); };
+  paint(0);
+  const guesses = { 1: [' the', 6], 3: [' a', 9], 5: [' the', 13], 7: [' located', 19], 9: [' Vienna', 41], 12: [' Vienna', 82] };
+  const gEls = {};
+  Object.entries(guesses).forEach(([d, [t, p]]) => { const e = H('div', 'guess', `<span class="d">Block ${d}</span><span class="g">${esc(t)}</span><div class="track"><div class="fill"></div></div>`, right); gEls[d] = { e, p }; });
+  H('p', 'note', 'Illustration: researchers can peek at the running vector mid-way (the "logit lens"), and guesses often get sharper deeper in the stack.', right);
+  let i = 0;
+  const vy = k => (k < 0 ? y0 + 6 : blocks[k].y + 4);
+  vg.setAttribute('transform', `translate(0,${vy(-1)})`);
+  const stepUp = () => {
+    if (i >= N) return;
+    const b = blocks[i], from = vy(i - 1), to = vy(i);
+    tween(380, t => vg.setAttribute('transform', `translate(0,${lerp(from, to, t)})`), () => {
+      b.a.setAttribute('fill', 'rgba(125,184,240,.35)'); b.a.setAttribute('stroke', '#7DB8F0');
+      after(260, () => { b.m.setAttribute('fill', 'rgba(179,157,240,.35)'); b.m.setAttribute('stroke', '#B39DF0'); paint(i + 1); });
+      after(560, () => {
+        b.a.setAttribute('fill', 'rgba(244,169,60,.12)'); b.m.setAttribute('fill', 'rgba(244,169,60,.12)'); b.a.setAttribute('stroke', 'rgba(244,169,60,.5)'); b.m.setAttribute('stroke', 'rgba(244,169,60,.5)');
+        const g = gEls[i + 1]; if (g) { g.e.classList.add('in'); after(50, () => g.e.querySelector('.fill').style.width = g.p + '%'); }
+        i++; stepUp();
+      });
+    });
+  };
+  after(700, stepUp);
+};
+
+/* ---------- 12: sampling ---------- */
+BUILD.sample = st => {
+  const w = H('div', 'sm', null, st);
+  const pr = H('div', 'sm-prompt', 'The capital of Austria is<span class="pick"> ___</span>', w);
+  const bars = H('div', 'bars', null, w);
+  const sl = H('div', 'sliders', null, w);
+  const mk = (lab, min, max, stp, val) => { const d = H('div', 'sl', `<label><span>${lab}</span><b></b></label>`, sl); const r = H('input', null, null, d); Object.assign(r, { type: 'range', min, max, step: stp, value: val }); r.setAttribute('aria-label', lab); return { d, r, b: d.querySelector('b') }; };
+  const T = mk('Temperature', .1, 2, .05, 1), P = mk('Top-p', .1, 1, .05, 1);
+  const btn = H('button', 'pickbtn', 'Pick a token', sl);
+  const hist = H('div', 'history', 'Picks so far: none yet', w);
+  const TOK = [[' Vienna', 9], [' a', 6.4], [' located', 5.9], [' the', 5.3], [' Graz', 4.4], [' home', 4.1], [' one', 3.9], [' famous', 3.6]];
+  const rows = TOK.map(([t]) => H('div', 'brow', `<span class="lab">${esc(t)}</span><div class="track"><div class="fill"></div></div><span class="pct"></span>`, bars));
+  H('div', 'note', 'Top 8 shown out of the whole vocabulary.', bars);
+  let kept = [], probs = [];
+  const calc = () => {
+    const temp = +T.r.value, tp = +P.r.value;
+    T.b.textContent = temp.toFixed(2); P.b.textContent = tp.toFixed(2);
+    const ex = TOK.map(([, l]) => Math.exp(l / temp)); const s = ex.reduce((a, b) => a + b, 0);
+    const raw = ex.map(v => v / s);
+    kept = []; let cum = 0;
+    for (let i = 0; i < raw.length; i++) { if (cum < tp || kept.length === 0) { kept.push(i); cum += raw[i]; } }
+    const ks = kept.reduce((a, i) => a + raw[i], 0);
+    probs = raw.map((v, i) => kept.includes(i) ? v / ks : 0);
+    rows.forEach((r, i) => {
+      const cut = !kept.includes(i);
+      r.classList.toggle('cut', cut);
+      r.querySelector('.fill').style.width = (cut ? raw[i] : probs[i]) * 100 + '%';
+      r.querySelector('.pct').textContent = ((cut ? raw[i] : probs[i]) * 100).toFixed(1) + '%';
+    });
+  };
+  const counts = {};
+  let spinning = false;
+  const pick = () => {
+    if (spinning) return; spinning = true;
+    rows.forEach(r => r.classList.remove('chosen'));
+    let x = Math.random(), sel = kept[kept.length - 1];
+    for (const i of kept) { x -= probs[i]; if (x <= 0) { sel = i; break; } }
+    const seq = []; const n = 10 + kept.indexOf(sel);
+    for (let k = 0; k < n; k++) seq.push(kept[k % kept.length]);
+    seq.push(sel);
+    let k = 0, d = 60;
+    const tick = () => {
+      rows.forEach(r => r.classList.remove('spin'));
+      if (k >= seq.length) { rows[sel].classList.add('chosen'); pr.querySelector('.pick').textContent = TOK[sel][0]; counts[TOK[sel][0]] = (counts[TOK[sel][0]] || 0) + 1; hist.innerHTML = 'Picks so far: ' + Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([t, c]) => `<b>${esc(t)}</b> ×${c}`).join(', '); spinning = false; return; }
+      rows[seq[k]].classList.add('spin'); k++; d *= 1.12; after(d, tick);
+    };
+    tick();
+  };
+  let demo = true;
+  const userTook = () => { demo = false; };
+  T.r.addEventListener('input', () => { userTook(); calc(); });
+  P.r.addEventListener('input', () => { userTook(); calc(); });
+  btn.onclick = () => { userTook(); pick(); };
+  calc();
+  // guided demo for recording
+  const slide = (el, to, dur, done) => { const from = +el.r.value; tween(dur, t => { if (!demo) return; el.r.value = lerp(from, to, t); calc(); }, () => demo && done && done()); };
+  const seq = [
+    [1000, () => pick()], [2200, () => slide(T, .3, 1500)], [2200, () => slide(T, 1.9, 2000)],
+    [2400, () => pick()], [2200, () => pick()], [2200, () => pick()],
+    [2200, () => slide(T, 1, 1200)], [1700, () => slide(P, .5, 1500)], [2000, () => pick()],
+  ];
+  let tt = 0; seq.forEach(([d, fn]) => { tt += d; after(tt, () => demo && fn()); });
+};
+
+/* ---------- 13: autoregressive loop ---------- */
+BUILD.loop = st => {
+  const w = H('div', 'lp', null, st);
+  const chat = H('div', 'chat', null, w);
+  H('div', 'bub user', 'Why is the sky blue?', chat);
+  const ai = H('div', 'bub ai', '', chat);
+  const mid = H('div', 'lp-mid', null, w);
+  const outslot = H('div', 'outslot', null, mid);
+  const model = H('div', 'model', null, mid);
+  for (let i = 0; i < 14; i++) H('i', null, null, model);
+  H('span', 'ml', 'The whole model', model);
+  const passes = H('div', 'passes', '', mid);
+  const inBox = H('div', 'lp-in', '<h4>Model input</h4>', w);
+  const row = H('div', 'inrow', null, inBox);
+  ['<|user|>', ...encode('Why is the sky blue?').map(x => x.t), '<|assistant|>'].forEach((t, i) => H('span', 'tok ' + (t.startsWith('<|') ? 'special' : 'c' + (i % 5)), esc(t), row));
+  const ANS = [' Sunlight', ' is', ' a', ' mix', ' of', ' all', ' colors', '.', ' Air', ' scatters', ' blue', ' light', ' much', ' more', ' than', ' red', ',', ' so', ' the', ' sky', ' looks', ' blue', '.', '<|end|>'];
+  const bars = [...model.querySelectorAll('i')];
+  let n = 0;
+  const step = () => {
+    if (n >= ANS.length) return;
+    const t = ANS[n], d = n < 3 ? 1 : n < 6 ? .6 : .32;
+    passes.innerHTML = `Pass <b>${n + 1}</b>: the model reads everything so far and picks one token`;
+    model.classList.add('think');
+    bars.forEach((b, k) => after(k * 30 * d, () => b.style.background = '#7DB8F0'));
+    after(700 * d, () => {
+      model.classList.remove('think'); bars.forEach(b => b.style.background = '');
+      const end = t === '<|end|>';
+      const o = H('span', 'tok pop ' + (end ? 'special' : 'c0'), esc(t), outslot);
+      after(450 * d + 150, () => {
+        const ph = H('span', 'tok ' + (end ? 'special' : 'gen'), esc(t), row); ph.style.visibility = 'hidden';
+        const sr = st.getBoundingClientRect(), a = o.getBoundingClientRect(), b = ph.getBoundingClientRect();
+        const fl = H('span', o.className.replace('pop', '') + ' flyer', esc(t), st);
+        fl.style.left = (a.left - sr.left) + 'px'; fl.style.top = (a.top - sr.top) + 'px';
+        o.remove();
+        requestAnimationFrame(() => requestAnimationFrame(() => { fl.style.left = (b.left - sr.left) + 'px'; fl.style.top = (b.top - sr.top) + 'px'; }));
+        after(520, () => {
+          fl.remove(); ph.style.visibility = '';
+          if (!end) ai.textContent += t; 
+          n++;
+          if (end) { passes.innerHTML = `Done: <b>${ANS.length}</b> passes for ${ANS.length} tokens. The end token tells the app to stop.`; return; }
+          after(200 * d, step);
+        });
+      });
+    });
+  };
+  ai.textContent = '';
+  after(800, step);
+};
+
+/* ---------- start ---------- */
+window.addEventListener('hashchange', () => { const h = parseInt(location.hash.slice(1), 10); if (Number.isFinite(h) && h !== cur) show(h); });
+let start = NaN; try { start = parseInt(location.hash.slice(1), 10); } catch (e) {}
+show(Number.isFinite(start) ? start : 0);
+})();
+
+</script>
+</body>
+</html>
